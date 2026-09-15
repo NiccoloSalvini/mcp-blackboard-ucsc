@@ -44,6 +44,12 @@ _load_dotenv()
 BASE_URL = os.environ.get("BB_BASE_URL", "https://blackboard.unicatt.it").rstrip("/")
 APP_KEY = os.environ.get("BB_APP_KEY", "")
 APP_SECRET = os.environ.get("BB_APP_SECRET", "")
+# A token lifted from a logged-in Ultra session, used as-is. Blackboard issues it
+# to its own first-party UI, so it carries the signed-in user's permissions and
+# expires with the session — roughly an hour. It exists so the server is usable
+# before an administrator registers our Application ID; it is not a substitute
+# for that. When set, it wins over the client-credentials exchange below.
+SESSION_TOKEN = os.environ.get("BB_TOKEN", "")
 ALLOW_WRITES = os.environ.get("BB_ALLOW_WRITES", "0") == "1"
 ALLOW_GRADE_WRITES = os.environ.get("BB_ALLOW_GRADE_WRITES", "0") == "1"
 
@@ -68,13 +74,17 @@ async def _access_token(client: httpx.AsyncClient) -> str:
     """Fetch and cache an OAuth2 token, refreshing a minute before expiry."""
     global _token, _token_expires_at
 
+    if SESSION_TOKEN:
+        return SESSION_TOKEN
+
     if _token and time.time() < _token_expires_at:
         return _token
 
     if not APP_KEY or not APP_SECRET:
         raise BlackboardError(
-            "BB_APP_KEY / BB_APP_SECRET are not set. Register an application at "
-            "developer.anthology.com, then ask the Blackboard administrator to "
+            "Set BB_TOKEN to a token from a logged-in Ultra session, or set "
+            "BB_APP_KEY / BB_APP_SECRET. For the latter, register an application "
+            "at developer.anthology.com, then ask the Blackboard administrator to "
             "add that Application ID under Admin > REST API Integrations."
         )
 
@@ -125,6 +135,14 @@ async def _request(
 
     if resp.status_code == 404:
         raise BlackboardError(f"Not found: {method} {path}")
+    if resp.status_code == 401 and SESSION_TOKEN:
+        # The usual cause, and it says nothing useful on its own.
+        raise BlackboardError(
+            "401: the BB_TOKEN session token has expired — they last about an "
+            "hour. Grab a fresh one from a logged-in Blackboard tab: DevTools > "
+            "Network, filter 'tokeninfo', reload a course page, copy access_token "
+            "off the request URL."
+        )
     if resp.status_code >= 400:
         raise BlackboardError(f"{resp.status_code} on {method} {path}: {resp.text[:500]}")
     if not resp.content:
@@ -399,6 +417,8 @@ async def bb_config() -> dict:
     """What this server is pointed at and what it is allowed to do."""
     return {
         "base_url": BASE_URL,
+        "auth_mode": "session-token" if SESSION_TOKEN else "client-credentials",
+        "session_token_present": bool(SESSION_TOKEN),
         "credentials_present": bool(APP_KEY and APP_SECRET),
         "writes_enabled": ALLOW_WRITES,
         "grade_writes_enabled": ALLOW_GRADE_WRITES,

@@ -39,6 +39,26 @@ the only way in, and getting one takes two steps:
 
 Step 2 is the real gate. Until an admin does it, the key is inert.
 
+## Working before the admin gets to it
+
+The Ultra web UI is itself a registered application, and the token it holds is a
+normal bearer token for the same public API this server talks to. Set it as
+`BB_TOKEN` and every tool works immediately, acting as the signed-in user:
+
+```
+BB_TOKEN=<token from a logged-in session>
+```
+
+Grab one in Chrome, logged into Blackboard: DevTools -> Network, filter
+`tokeninfo`, reload a course page, copy `access_token` off the request URL.
+
+It expires with the session, about an hour, and it is Blackboard's own UI
+credential rather than one issued to this tool. So it is a way to get work done
+today, not the arrangement to settle on. `scripts/bb-get.sh` does the same thing
+from the shell for a single read, without starting the server.
+
+Verified working on `blackboard.unicatt.it` on 15 September 2026.
+
 ## Setup
 
 ```bash
