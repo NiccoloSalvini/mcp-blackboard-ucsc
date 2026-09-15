@@ -14,10 +14,32 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
 from mcp.server.mcpserver import MCPServer
+
+
+def _load_dotenv() -> None:
+    """Read .env next to the project root, without adding a dependency.
+
+    Credentials live here and not in .mcp.json: that file is committed to a
+    public repository, this one is git-ignored. Existing environment
+    variables win, so a shell override still works.
+    """
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
+_load_dotenv()
 
 BASE_URL = os.environ.get("BB_BASE_URL", "https://blackboard.unicatt.it").rstrip("/")
 APP_KEY = os.environ.get("BB_APP_KEY", "")
