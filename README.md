@@ -10,24 +10,36 @@ This one talks to the LMS.
 
 ## What the instance supports
 
-Probed against `blackboard.unicatt.it` (Learn SaaS **4000.21.0**). Routes that do
-not exist answer `404` without a token; these answer `401`, which is how we know
-they are there:
+Against `blackboard.unicatt.it` (Learn SaaS **4000.21.0**), with a real
+instructor token:
 
-| Route | Used by |
-|---|---|
-| `GET/POST /v1/courses/{id}/contents` | `bb_list_contents`, `bb_create_content` |
-| `GET/POST /v1/courses/{id}/assessments` | `bb_list_assessments`, `bb_create_assessment` |
-| `GET/POST /v1/courses/{id}/assessments/{aid}/questions` | `bb_list_questions`, `bb_add_question` |
-| `GET/POST /v2/courses/{id}/gradebook/columns` | `bb_list_gradebook_columns`, `bb_create_gradebook_column` |
-| `GET /v2/.../columns/{cid}/attempts` | `bb_list_attempts`, `bb_get_attempt` |
-| `PATCH /v1/.../columns/{cid}/users/{uid}` | `bb_set_grade` |
-| `GET /v1/courses/{id}/users` | `bb_list_students` |
+| Route | Used by | Status |
+|---|---|---|
+| `GET /v1/users/me` | `bb_whoami` | **200 confirmed** |
+| `GET/POST /v1/courses/{id}/contents` | `bb_list_contents`, `bb_create_content` | **200 confirmed** on GET |
+| `GET/POST /v2/courses/{id}/gradebook/columns` | `bb_list_gradebook_columns`, `bb_create_gradebook_column` | **200 confirmed** on GET |
+| `GET /v2/.../columns/{cid}/attempts` | `bb_list_attempts`, `bb_get_attempt` | untested |
+| `PATCH /v1/.../columns/{cid}/users/{uid}` | `bb_set_grade` | untested |
+| `GET /v1/courses/{id}/users` | `bb_list_students` | untested |
+| `GET/POST /v1/courses/{id}/assessments` | `bb_list_assessments`, `bb_create_assessment` | **404** |
+| `GET/POST /v1/courses/{id}/assessments/{aid}/questions` | `bb_list_questions`, `bb_add_question` | **404** on the parent |
+
+An earlier version of this file inferred the assessment routes were present
+because they answered `401` rather than `404` to an unauthenticated probe. That
+inference was wrong. With a working token both the collection and a single known
+assessment return `404`, on a course that demonstrably has tests in it — their
+content links carry `assessmentId` values, and the gradebook columns behind them
+read fine. So on this instance the four assessment tools should be treated as
+non-functional until someone shows otherwise: tests get built in the Ultra UI,
+and this server reads the gradebook side of them.
+
+The lesson generalises. `401` means the request was not authenticated, and
+nothing more; it is not evidence that a route exists. Probe with credentials.
 
 ## Getting a token — the part that needs someone else
 
-The REST API does **not** accept a browser session cookie. Both
-`/learn/api/public/v1/*` and the internal `/learn/api/v1/*` return
+The REST API does **not** accept a browser session cookie from outside the page.
+Both `/learn/api/public/v1/*` and the internal `/learn/api/v1/*` return
 `401 API request is not authenticated` for a logged-in browser. A bearer token is
 the only way in, and getting one takes two steps:
 
