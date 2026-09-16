@@ -17,7 +17,7 @@
 set -euo pipefail
 
 HOST="https://blackboard.unicatt.it"
-BASE="/learn/api/public/v1"
+BASE="/learn/api/public"
 
 if [[ $# -lt 1 ]]; then
   echo "usage: ${0##*/} <api-path>   e.g. courses/_170037_1/contents" >&2
@@ -37,6 +37,13 @@ case "$path" in
     echo "refusing suspicious path: $path" >&2
     exit 2
     ;;
+esac
+
+# The public API is versioned per route: contents and assessments are v1, the
+# gradebook is v2. Pass the version yourself when it is not v1.
+case "$path" in
+  v1/*|v2/*|v3/*) ;;
+  *) path="v1/${path}" ;;
 esac
 
 response=$(curl -sS -G \
