@@ -58,6 +58,34 @@ and names the offender. Course announcements take `title`, `body`, `draft`
 and `availability.duration`; `showAtLogin`/`showInCourses` belong to *system*
 announcements and are rejected here.
 
+## Generating a test
+
+Question content cannot be written through the API on Ultra (see above), so a
+generated exam reaches Blackboard through the one door Ultra leaves open:
+**Test > + > Upload Questions**, which takes a tab-delimited text file.
+`bb_export_test` writes that file.
+
+```
+bb_export_test(questions=[
+  {"type": "MC",  "text": "OLS minimises …", "answers": [{"text": "…", "correct": true}, {"text": "…", "correct": false}]},
+  {"type": "MA",  "text": "…", "answers": [...]},          # one or more correct
+  {"type": "TF",  "text": "…", "correct": false},
+  {"type": "ESS", "text": "…", "example": "model answer"}, # graded by hand
+  {"type": "NUM", "text": "…", "answer": -5.34, "tolerance": 0.02},
+  {"type": "FIB", "text": "The penalty in LASSO is the ___ norm.", "answers": ["L1", "l1"]},
+], path="exams/first-intermediate.txt")
+```
+
+What the format enforces, and the tool enforces first with a message that names
+the question: one question per line, no header, **at most 250 per file**,
+markers in lowercase English, MC with exactly one correct answer, tabs and
+newlines scrubbed out of every field. UTF-8.
+
+**Points do not travel in this file.** Every question arrives at 0 and is given
+its value in the test after upload; the tool's result says so next to the
+count. Time limit, attempts and results release are set in the same screen —
+they are not exposed by the API either.
+
 What the API does **not** expose, on any route: a test's time limit, attempts
 allowed, or when results and feedback are released. Those are set in the Ultra
 UI. The gradebook column does carry `attemptsAllowed` and `scoringModel`, which
