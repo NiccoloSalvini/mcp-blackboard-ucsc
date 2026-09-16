@@ -13,6 +13,7 @@ mistake here that reaches students directly.
 from __future__ import annotations
 
 import os
+import pathlib
 import re
 import time
 from pathlib import Path
@@ -494,6 +495,115 @@ async def bb_post_announcement(
         },
         write=True,
     )
+
+
+# --------------------------------------------------------------------------
+# export — a test as Blackboard's upload-questions file
+# --------------------------------------------------------------------------
+#
+# The public API cannot write question content on Ultra (questions come back
+# as opaque blocks). What Ultra does accept is a tab-delimited text file under
+# Test > Upload Questions: one question per line, no header, at most 250 rows,
+# answer markers in lowercase English. This builds that file. It touches no
+# network and needs no write switch: the upload is a click in the UI.
+#
+# Points cannot travel in this file — every question lands at 0 and is given
+# its value in the test after upload. That is the format's limit, not ours.
+
+_BBQ_MAX_ROWS = 250
+_BBQ_MAX_ANSWERS = 100
+
+
+def _bbq_clean(text: str) -> str:
+    """One field: no tabs or newlines, or the row splits in the wrong place."""
+    return re.sub(r"[\t\r\n]+", " ", str(text)).strip()
+
+
+def _bbq_line(q: dict[str, Any], n: int) -> str:
+    kind = str(q.get("type", "")).upper()
+    text = _bbq_clean(q.get("text", ""))
+    if not text:
+        raise BlackboardError(f"question {n}: empty text")
+    answers = q.get("answers") or []
+
+    if kind in ("MC", "MA"):
+        if not answers:
+            raise BlackboardError(f"question {n} ({kind}): needs answers")
+        if len(answers) > _BBQ_MAX_ANSWERS:
+            raise BlackboardError(f"question {n}: at most {_BBQ_MAX_ANSWERS} answers")
+        correct = sum(1 for a in answers if a.get("correct"))
+        if kind == "MC" and correct != 1:
+            raise BlackboardError(f"question {n} (MC): exactly one correct answer, got {correct}")
+        if kind == "MA" and correct < 1:
+            raise BlackboardError(f"question {n} (MA): at least one correct answer")
+        cells = [kind, text]
+        for a in answers:
+            cells += [_bbq_clean(a.get("text", "")), "correct" if a.get("correct") else "incorrect"]
+        return "\t".join(cells)
+
+    if kind == "TF":
+        if "correct" not in q:
+            raise BlackboardError(f"question {n} (TF): set correct: true|false")
+        return "\t".join(["TF", text, "true" if q["correct"] else "false"])
+
+    if kind == "ESS":
+        cells = ["ESS", text]
+        if q.get("example"):
+            cells.append(_bbq_clean(q["example"]))
+        return "\t".join(cells)
+
+    if kind == "NUM":
+        if "answer" not in q:
+            raise BlackboardError(f"question {n} (NUM): needs answer")
+        cells = ["NUM", text, str(q["answer"])]
+        if q.get("tolerance") is not None:
+            cells.append(str(q["tolerance"]))
+        return "\t".join(cells)
+
+    if kind == "FIB":
+        if not answers:
+            raise BlackboardError(f"question {n} (FIB): needs accepted answers")
+        return "\t".join(["FIB", text] + [_bbq_clean(a if isinstance(a, str) else a.get("text", "")) for a in answers])
+
+    raise BlackboardError(f"question {n}: unknown type {kind!r}; use MC, MA, TF, ESS, NUM or FIB")
+
+
+@mcp.tool()
+async def bb_export_test(questions: list[dict], path: str) -> dict:
+    """Write a test as the tab-delimited file Ultra accepts under Upload Questions.
+
+    Each question is a dict with `type` and `text`, plus:
+      MC / MA  — `answers`: [{"text": str, "correct": bool}, ...]  (MC: exactly one correct)
+      TF       — `correct`: true|false
+      ESS      — optional `example` (a model answer, shown to graders)
+      NUM      — `answer`: number, optional `tolerance`
+      FIB      — `answers`: [str, ...] accepted answers
+
+    Writes UTF-8, no header, at most 250 rows. Then in Ultra: open the test,
+    "+" > Upload Questions > pick this file. Points are NOT carried by this
+    format: every question arrives at 0 and is set in the test afterwards. The
+    result says so, with the count, so nobody uploads and forgets.
+    """
+    if not questions:
+        raise BlackboardError("no questions")
+    if len(questions) > _BBQ_MAX_ROWS:
+        raise BlackboardError(f"Blackboard takes at most {_BBQ_MAX_ROWS} questions per file; got {len(questions)}. Split it.")
+    lines = [_bbq_line(q, i + 1) for i, q in enumerate(questions)]
+    out = pathlib.Path(path).expanduser()
+    if out.suffix.lower() != ".txt":
+        out = out.with_suffix(".txt")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    by_type: dict[str, int] = {}
+    for ln in lines:
+        by_type[ln.split("\t", 1)[0]] = by_type.get(ln.split("\t", 1)[0], 0) + 1
+    return {
+        "path": str(out),
+        "questions": len(lines),
+        "by_type": by_type,
+        "points": "NOT in the file — set them in the test after upload; all arrive at 0",
+        "next": "Ultra: open the test > + > Upload Questions > this file",
+    }
 
 
 # --------------------------------------------------------------------------
