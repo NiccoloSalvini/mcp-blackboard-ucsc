@@ -46,7 +46,7 @@ APP_KEY = os.environ.get("BB_APP_KEY", "")
 APP_SECRET = os.environ.get("BB_APP_SECRET", "")
 # A token lifted from a logged-in Ultra session, used as-is. Blackboard issues it
 # to its own first-party UI, so it carries the signed-in user's permissions and
-# expires with the session — roughly an hour. It exists so the server is usable
+# lives for minutes — the client refreshes it as it works. It exists so the server is usable
 # before an administrator registers our Application ID; it is not a substitute
 # for that. When set, it wins over the client-credentials exchange below.
 SESSION_TOKEN = os.environ.get("BB_TOKEN", "")
@@ -138,8 +138,8 @@ async def _request(
     if resp.status_code == 401 and SESSION_TOKEN:
         # The usual cause, and it says nothing useful on its own.
         raise BlackboardError(
-            "401: the BB_TOKEN session token has expired — they last about an "
-            "hour. Grab a fresh one from a logged-in Blackboard tab: DevTools > "
+            "401: the BB_TOKEN session token has expired — they last minutes, "
+            "not hours. Grab a fresh one from a logged-in Blackboard tab: DevTools > "
             "Network, filter 'tokeninfo', reload a course page, copy access_token "
             "off the request URL."
         )

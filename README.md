@@ -85,8 +85,10 @@ BB_TOKEN=<token from a logged-in session>
 Grab one in Chrome, logged into Blackboard: DevTools -> Network, filter
 `tokeninfo`, reload a course page, copy `access_token` off the request URL.
 
-It expires with the session, about an hour, and it is Blackboard's own UI
-credential rather than one issued to this tool. So it is a way to get work done
+It is short-lived — minutes, not hours: the Ultra client refreshes it as it
+works, and a value copied earlier is usually dead by the time it is pasted. Grab
+it and use it in the same minute. It is also Blackboard's own UI credential
+rather than one issued to this tool. So it is a way to get work done
 today, not the arrangement to settle on. `scripts/bb-get.sh` does the same thing
 from the shell for a single read, without starting the server.
 
