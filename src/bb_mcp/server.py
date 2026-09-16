@@ -13,6 +13,7 @@ mistake here that reaches students directly.
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -169,6 +170,26 @@ async def _paged(path: str, params: dict[str, Any] | None = None, limit: int = 2
     return out[:limit]
 
 
+# Blackboard Markup Language: the subset of HTML a content or announcement body
+# may contain. Anything else is rejected server-side with a 400 that quotes the
+# whole body and says nothing about which tag broke it. Check here first and
+# name the tag. Notably <b> and <i> are not in the set; <strong> and <em> are.
+_BBML_TAGS = {"a", "br", "del", "div", "em", "h4", "h5", "h6", "li", "ol", "p",
+              "span", "strong", "sub", "sup", "ul"}
+_BBML_HINT = {"b": "strong", "i": "em", "h1": "h4", "h2": "h4", "h3": "h4"}
+
+
+def _check_bbml(html: str) -> None:
+    used = set(re.findall(r"</?([a-zA-Z][a-zA-Z0-9]*)", html))
+    bad = sorted(t for t in used if t.lower() not in _BBML_TAGS)
+    if bad:
+        hints = ", ".join(f"<{t}> (use <{_BBML_HINT[t]}>)" if t in _BBML_HINT else f"<{t}>" for t in bad)
+        raise BlackboardError(
+            f"Body uses tags outside Blackboard Markup Language: {hints}. "
+            f"Allowed: {', '.join(sorted(_BBML_TAGS))}."
+        )
+
+
 # --------------------------------------------------------------------------
 # read
 # --------------------------------------------------------------------------
@@ -323,6 +344,7 @@ async def bb_create_content(
         "contentHandler": handler,
     }
     if body_html:
+        _check_bbml(body_html)
         payload["body"] = body_html
     return await _request("POST", path, json=payload, write=True)
 
@@ -421,6 +443,54 @@ async def bb_create_gradebook_column(
             "description": description,
             "score": {"possible": points_possible},
             "grading": {"type": "Manual"},
+        },
+        write=True,
+    )
+
+
+@mcp.tool()
+async def bb_set_availability(course_id: str, content_id: str, available: bool) -> dict:
+    """Show or hide one content item — a folder, a document, a test link.
+
+    This is how something created hidden gets published to students, and how it
+    is pulled back. Returns the item as Blackboard now holds it, so the caller
+    can read `availability.available` off the response rather than trust the
+    request.
+    """
+    return await _request(
+        "PATCH",
+        f"/v1/courses/{course_id}/contents/{content_id}",
+        json={"availability": {"available": "Yes" if available else "No"}},
+        write=True,
+    )
+
+
+@mcp.tool()
+async def bb_post_announcement(
+    course_id: str,
+    title: str,
+    body_html: str,
+    draft: bool = False,
+) -> dict:
+    """Post a course announcement. Students are notified per their own settings.
+
+    `body_html` is Blackboard Markup Language, not free HTML: p, ul/ol/li, a
+    with href, strong, em, br, div, span, sub, sup, del, h4–h6. It is checked
+    here before sending, because the server's 400 does not say which tag it
+    objected to. `draft=True` saves without publishing.
+
+    The course announcement object has no email flag; the "send a copy by
+    email" tick exists only in the Ultra UI at creation time.
+    """
+    _check_bbml(body_html)
+    return await _request(
+        "POST",
+        f"/v1/courses/{course_id}/announcements",
+        json={
+            "title": title,
+            "body": body_html,
+            "draft": draft,
+            "availability": {"duration": {"type": "Permanent"}},
         },
         write=True,
     )

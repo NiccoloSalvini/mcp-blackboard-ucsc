@@ -22,6 +22,8 @@ exact build:
 | `GET/PATCH/DELETE .../questions/{qid}` | — (not wrapped yet) | in the reference |
 | `GET/POST /v2/courses/{id}/gradebook/columns` | `bb_list_gradebook_columns`, `bb_create_gradebook_column` | **200 confirmed** on GET |
 | `GET /v2/.../columns/{cid}/attempts` | `bb_list_attempts`, `bb_get_attempt` | **200 confirmed** |
+| `PATCH /v1/courses/{id}/contents/{cid}` | `bb_set_availability` | **200 confirmed** |
+| `POST /v1/courses/{id}/announcements` | `bb_post_announcement` | **201 confirmed** |
 | `PATCH /v1/.../columns/{cid}/users/{uid}` | `bb_set_grade` | untested |
 | `GET /v1/courses/{id}/users` | `bb_list_students` | **200 confirmed** (memberships: `userId` only, no names) |
 
@@ -46,6 +48,15 @@ question blocks the public API hands back as handles, not as content. So
 `bb_add_question` still sends the Original-era shape (`questionType`,
 `displayText`, `answers`) that nothing here has confirmed. It has not been run
 against a live course and should not be until a safe course exists to try it on.
+
+**Bodies are BBML, not HTML.** Content and announcement bodies must use
+Blackboard Markup Language: `p`, `ul`/`ol`/`li`, `a` with `href`, `strong`,
+`em`, `br`, `div`, `span`, `sub`, `sup`, `del`, `h4`–`h6`. `<b>` and `<i>`
+are not in the set — the server answers 400, echoes the whole body, and does
+not say which tag it disliked. The server checks the tag set before sending
+and names the offender. Course announcements take `title`, `body`, `draft`
+and `availability.duration`; `showAtLogin`/`showInCourses` belong to *system*
+announcements and are rejected here.
 
 What the API does **not** expose, on any route: a test's time limit, attempts
 allowed, or when results and feedback are released. Those are set in the Ultra
