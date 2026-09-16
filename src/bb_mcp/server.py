@@ -379,6 +379,10 @@ async def bb_add_question(
 
     `answers` is a list of {"text": str, "correct": bool} — required for
     MultipleChoice, TrueFalse and MultipleAnswer, ignored for Essay.
+
+    Unverified on Ultra (Learn 4000.x): the questions route answers 200 there
+    but returns question blocks as opaque handles, and this payload is the
+    Original-era shape. Try it on a scratch course before trusting it.
     """
     payload: dict[str, Any] = {
         "title": text[:80],
