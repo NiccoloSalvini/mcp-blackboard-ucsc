@@ -11,30 +11,42 @@ This one talks to the LMS.
 ## What the instance supports
 
 Against `blackboard.unicatt.it` (Learn SaaS **4000.21.0**), with a real
-instructor token:
+instructor token, and checked against the published API reference for that
+exact build:
 
 | Route | Used by | Status |
 |---|---|---|
 | `GET /v1/users/me` | `bb_whoami` | **200 confirmed** |
-| `GET/POST /v1/courses/{id}/contents` | `bb_list_contents`, `bb_create_content` | **200 confirmed** on GET |
+| `GET/POST /v1/courses/{id}/contents` | `bb_list_contents`, `bb_list_assessments`, `bb_create_content`, `bb_create_assessment` | **200 confirmed** on GET |
+| `GET/POST /v1/courses/{id}/assessments/{aid}/questions` | `bb_list_questions`, `bb_add_question` | **200 confirmed** on GET |
+| `GET/PATCH/DELETE .../questions/{qid}` | — (not wrapped yet) | in the reference |
 | `GET/POST /v2/courses/{id}/gradebook/columns` | `bb_list_gradebook_columns`, `bb_create_gradebook_column` | **200 confirmed** on GET |
 | `GET /v2/.../columns/{cid}/attempts` | `bb_list_attempts`, `bb_get_attempt` | untested |
 | `PATCH /v1/.../columns/{cid}/users/{uid}` | `bb_set_grade` | untested |
 | `GET /v1/courses/{id}/users` | `bb_list_students` | untested |
-| `GET/POST /v1/courses/{id}/assessments` | `bb_list_assessments`, `bb_create_assessment` | **404** |
-| `GET/POST /v1/courses/{id}/assessments/{aid}/questions` | `bb_list_questions`, `bb_add_question` | **404** on the parent |
 
-An earlier version of this file inferred the assessment routes were present
-because they answered `401` rather than `404` to an unauthenticated probe. That
-inference was wrong. With a working token both the collection and a single known
-assessment return `404`, on a course that demonstrably has tests in it — their
-content links carry `assessmentId` values, and the gradebook columns behind them
-read fine. So on this instance the four assessment tools should be treated as
-non-functional until someone shows otherwise: tests get built in the Ultra UI,
-and this server reads the gradebook side of them.
+There is **no `/assessments` collection and no GET of a single assessment** in
+the public API — the reference for 4000.21.0 lists only the `/questions`
+sub-resource. An earlier revision of this server called `GET/POST
+/courses/{id}/assessments` anyway and, when that answered `404`, concluded the
+assessment tools were unusable here. Both halves of that were wrong: the route
+never existed, and the questions route underneath it works fine.
 
-The lesson generalises. `401` means the request was not authenticated, and
-nothing more; it is not evidence that a route exists. Probe with credentials.
+A test is a content item. Since Learn 3900.98 you create one with `POST
+/contents` and `contentHandler.id = "resource/x-bb-asmt-test-link"`; the
+response carries `assessmentId` (for the questions routes) and `gradeColumnId`
+(for the gradebook). `bb_list_assessments` and `bb_create_assessment` are now
+built on that, and `bb_create_content` takes a `kind` so it can make folders.
+
+What the API does **not** expose, on any route: a test's time limit, attempts
+allowed, or when results and feedback are released. Those are set in the Ultra
+UI. The gradebook column does carry `attemptsAllowed` and `scoringModel`, which
+is the nearest thing.
+
+The lesson that cost the most: `401` to an unauthenticated probe means only
+that the request was not authenticated. It is not evidence the route exists,
+and `404` with a valid token is not evidence a feature is disabled — check the
+reference for the build first.
 
 ## Getting a token — the part that needs someone else
 

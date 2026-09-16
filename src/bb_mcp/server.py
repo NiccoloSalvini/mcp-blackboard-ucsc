@@ -222,8 +222,28 @@ async def bb_list_contents(course_id: str, folder_id: str = "") -> list[dict]:
 
 @mcp.tool()
 async def bb_list_assessments(course_id: str) -> list[dict]:
-    """Assessments (tests, exams) in a course."""
-    return await _paged(f"/v1/courses/{course_id}/assessments")
+    """Tests in the course, with the ids needed to read their questions and grades.
+
+    There is no /assessments collection in the public API — a test is a content
+    item whose handler is resource/x-bb-asmt-test-link. So this lists course
+    contents and keeps those, surfacing assessmentId (for the questions routes)
+    and gradeColumnId (for the gradebook routes).
+    """
+    rows = await _paged(f"/v1/courses/{course_id}/contents")
+    out = []
+    for c in rows:
+        h = c.get("contentHandler", {})
+        if h.get("id") != "resource/x-bb-asmt-test-link":
+            continue
+        out.append({
+            "content_id": c.get("id"),
+            "title": c.get("title"),
+            "assessment_id": h.get("assessmentId"),
+            "grade_column_id": h.get("gradeColumnId"),
+            "available": c.get("availability", {}).get("available"),
+            "created": c.get("created"),
+        })
+    return out
 
 
 @mcp.tool()
@@ -280,51 +300,70 @@ async def bb_get_attempt(course_id: str, column_id: str, attempt_id: str) -> dic
 async def bb_create_content(
     course_id: str,
     title: str,
-    body_html: str,
+    body_html: str = "",
     parent_id: str = "",
+    kind: Literal["document", "folder"] = "document",
     available: bool = False,
 ) -> dict:
-    """Add a content item to the course page.
+    """Add a content item — a document or a folder — to the course page.
 
     Created hidden by default (`available=False`) so nothing appears to
-    students before you have looked at it.
+    students before you have looked at it. In Ultra a document must sit inside
+    a folder that is a page (isBbPage), so pass parent_id for documents.
     """
     path = (
         f"/v1/courses/{course_id}/contents/{parent_id}/children"
         if parent_id
         else f"/v1/courses/{course_id}/contents"
     )
-    return await _request(
-        "POST",
-        path,
-        json={
-            "title": title,
-            "body": body_html,
-            "availability": {"available": "Yes" if available else "No"},
-            "contentHandler": {"id": "resource/x-bb-document"},
-        },
-        write=True,
-    )
+    handler = {"id": "resource/x-bb-folder"} if kind == "folder" else {"id": "resource/x-bb-document"}
+    payload: dict[str, Any] = {
+        "title": title,
+        "availability": {"available": "Yes" if available else "No"},
+        "contentHandler": handler,
+    }
+    if body_html:
+        payload["body"] = body_html
+    return await _request("POST", path, json=payload, write=True)
 
 
 @mcp.tool()
 async def bb_create_assessment(
     course_id: str,
     title: str,
-    instructions: str = "",
+    parent_id: str = "",
     available: bool = False,
 ) -> dict:
-    """Create an assessment (test/exam) shell. Add questions to it afterwards."""
-    return await _request(
+    """Create a test shell. Add questions to it afterwards with bb_add_question.
+
+    Since Learn 3900.98 a test is created as a content item with the
+    resource/x-bb-asmt-test-link handler, not through an /assessments route
+    (there is none). The response carries assessmentId — pass that to
+    bb_add_question — and gradeColumnId for the gradebook.
+    """
+    path = (
+        f"/v1/courses/{course_id}/contents/{parent_id}/children"
+        if parent_id
+        else f"/v1/courses/{course_id}/contents"
+    )
+    created = await _request(
         "POST",
-        f"/v1/courses/{course_id}/assessments",
+        path,
         json={
             "title": title,
-            "instructions": {"displayText": instructions},
             "availability": {"available": "Yes" if available else "No"},
+            "contentHandler": {"id": "resource/x-bb-asmt-test-link"},
         },
         write=True,
     )
+    h = created.get("contentHandler", {})
+    return {
+        "content_id": created.get("id"),
+        "title": created.get("title"),
+        "assessment_id": h.get("assessmentId"),
+        "grade_column_id": h.get("gradeColumnId"),
+        "available": created.get("availability", {}).get("available"),
+    }
 
 
 @mcp.tool()
