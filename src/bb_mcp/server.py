@@ -1,245 +1,176 @@
-"""MCP server for Blackboard Learn Ultra.
+"""MCP server for Blackboard Learn Ultra at Università Cattolica.
 
-Talks to the documented public REST API using an OAuth2 client-credentials
-token. Every route used here was probed against the target instance: paths
-that do not exist answer 404 unauthenticated, the ones below answer 401,
-which is how we know they are present on this build.
-
-Writes are off unless explicitly enabled, and grade writes need their own
-switch, because posting a wrong number to an official gradebook is the one
-mistake here that reaches students directly.
+Talks to the documented public REST API with the application's own OAuth2
+token, which the site administrator bound to the instructor's user. Reads
+are always on. Writes are off unless BB_ALLOW_WRITES=1, and grade writes need
+BB_ALLOW_GRADE_WRITES=1 on top, because a wrong number in the official
+gradebook is the one mistake here that reaches students directly.
 """
 
 from __future__ import annotations
 
-import os
-import pathlib
-import re
-import time
-from pathlib import Path
 from typing import Any, Literal
 
-import httpx
 from mcp.server.mcpserver import MCPServer
 
-
-def _load_dotenv() -> None:
-    """Read .env next to the project root, without adding a dependency.
-
-    Credentials live here and not in .mcp.json: that file is committed to a
-    public repository, this one is git-ignored. Existing environment
-    variables win, so a shell override still works.
-    """
-    env_path = Path(__file__).resolve().parents[2] / ".env"
-    if not env_path.exists():
-        return
-    for line in env_path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
-
-
-_load_dotenv()
-
-BASE_URL = os.environ.get("BB_BASE_URL", "https://blackboard.unicatt.it").rstrip("/")
-APP_KEY = os.environ.get("BB_APP_KEY", "")
-APP_SECRET = os.environ.get("BB_APP_SECRET", "")
-# A token lifted from a logged-in Ultra session, used as-is. Blackboard issues it
-# to its own first-party UI, so it carries the signed-in user's permissions and
-# lives for minutes — the client refreshes it as it works. It exists so the server is usable
-# before an administrator registers our Application ID; it is not a substitute
-# for that. When set, it wins over the client-credentials exchange below.
-SESSION_TOKEN = os.environ.get("BB_TOKEN", "")
-ALLOW_WRITES = os.environ.get("BB_ALLOW_WRITES", "0") == "1"
-ALLOW_GRADE_WRITES = os.environ.get("BB_ALLOW_GRADE_WRITES", "0") == "1"
-
-API = f"{BASE_URL}/learn/api/public"
+from . import client as bb
+from . import export
+from .client import BlackboardError, check_bbml
 
 mcp = MCPServer("blackboard")
 
-
-class BlackboardError(RuntimeError):
-    pass
+TEST_HANDLER = "resource/x-bb-asmt-test-link"
 
 
-# --------------------------------------------------------------------------
-# auth
-# --------------------------------------------------------------------------
-
-_token: str | None = None
-_token_expires_at: float = 0.0
+def _name(user: dict | None) -> str | None:
+    n = (user or {}).get("name") or {}
+    full = " ".join(p for p in (n.get("given"), n.get("family")) if p)
+    return full or None
 
 
-async def _access_token(client: httpx.AsyncClient) -> str:
-    """Fetch and cache an OAuth2 token, refreshing a minute before expiry."""
-    global _token, _token_expires_at
-
-    if SESSION_TOKEN:
-        return SESSION_TOKEN
-
-    if _token and time.time() < _token_expires_at:
-        return _token
-
-    if not APP_KEY or not APP_SECRET:
-        raise BlackboardError(
-            "Set BB_TOKEN to a token from a logged-in Ultra session, or set "
-            "BB_APP_KEY / BB_APP_SECRET. For the latter, register an application "
-            "at developer.anthology.com, then ask the Blackboard administrator to "
-            "add that Application ID under Admin > REST API Integrations."
-        )
-
-    resp = await client.post(
-        f"{API}/v1/oauth2/token",
-        auth=(APP_KEY, APP_SECRET),
-        data={"grant_type": "client_credentials"},
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+def _contents_path(course_id: str, parent_id: str) -> str:
+    return (
+        f"/v1/courses/{course_id}/contents/{parent_id}/children"
+        if parent_id
+        else f"/v1/courses/{course_id}/contents"
     )
-    if resp.status_code != 200:
-        raise BlackboardError(
-            f"Token request failed ({resp.status_code}): {resp.text[:400]}"
-        )
-
-    payload = resp.json()
-    _token = payload["access_token"]
-    _token_expires_at = time.time() + payload.get("expires_in", 3600) - 60
-    return _token
 
 
-async def _request(
-    method: str,
-    path: str,
-    *,
-    json: dict[str, Any] | None = None,
-    params: dict[str, Any] | None = None,
-    write: bool = False,
-    grade_write: bool = False,
-) -> Any:
-    if grade_write and not ALLOW_GRADE_WRITES:
-        raise BlackboardError(
-            "Grade writes are disabled. Set BB_ALLOW_GRADE_WRITES=1 to allow them."
-        )
-    if write and not ALLOW_WRITES:
-        raise BlackboardError(
-            "Writes are disabled. Set BB_ALLOW_WRITES=1 to allow them."
-        )
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        token = await _access_token(client)
-        resp = await client.request(
-            method,
-            f"{API}{path}",
-            headers={"Authorization": f"Bearer {token}"},
-            json=json,
-            params=params,
-        )
-
-    if resp.status_code == 404:
-        raise BlackboardError(f"Not found: {method} {path}")
-    if resp.status_code == 401 and SESSION_TOKEN:
-        # The usual cause, and it says nothing useful on its own.
-        raise BlackboardError(
-            "401: the BB_TOKEN session token has expired — they last minutes, "
-            "not hours. Grab a fresh one from a logged-in Blackboard tab: DevTools > "
-            "Network, filter 'tokeninfo', reload a course page, copy access_token "
-            "off the request URL."
-        )
-    if resp.status_code >= 400:
-        raise BlackboardError(f"{resp.status_code} on {method} {path}: {resp.text[:500]}")
-    if not resp.content:
-        return {"ok": True}
-    return resp.json()
-
-
-async def _paged(path: str, params: dict[str, Any] | None = None, limit: int = 200) -> list[dict]:
-    """Follow Blackboard's paging links until exhausted or `limit` rows collected."""
-    out: list[dict] = []
-    query = dict(params or {})
-    query.setdefault("limit", 100)
-    next_path: str | None = path
-
-    while next_path and len(out) < limit:
-        payload = await _request("GET", next_path, params=query)
-        out.extend(payload.get("results", []))
-        next_url = payload.get("paging", {}).get("nextPage")
-        # nextPage comes back as a full API path; strip the prefix and drop
-        # the params we already encoded into it.
-        next_path = next_url.replace("/learn/api/public", "") if next_url else None
-        query = {}
-
-    return out[:limit]
-
-
-# Blackboard Markup Language: the subset of HTML a content or announcement body
-# may contain. Anything else is rejected server-side with a 400 that quotes the
-# whole body and says nothing about which tag broke it. Check here first and
-# name the tag. Notably <b> and <i> are not in the set; <strong> and <em> are.
-_BBML_TAGS = {"a", "br", "del", "div", "em", "h4", "h5", "h6", "li", "ol", "p",
-              "span", "strong", "sub", "sup", "ul"}
-_BBML_HINT = {"b": "strong", "i": "em", "h1": "h4", "h2": "h4", "h3": "h4"}
-
-
-def _check_bbml(html: str) -> None:
-    used = set(re.findall(r"</?([a-zA-Z][a-zA-Z0-9]*)", html))
-    bad = sorted(t for t in used if t.lower() not in _BBML_TAGS)
-    if bad:
-        hints = ", ".join(f"<{t}> (use <{_BBML_HINT[t]}>)" if t in _BBML_HINT else f"<{t}>" for t in bad)
-        raise BlackboardError(
-            f"Body uses tags outside Blackboard Markup Language: {hints}. "
-            f"Allowed: {', '.join(sorted(_BBML_TAGS))}."
-        )
+async def _students(course_id: str) -> list[dict]:
+    rows = await bb._paged(
+        f"/v1/courses/{course_id}/users",
+        {"expand": "user",
+         "fields": "userId,courseRoleId,user.name,user.studentId,user.contact.email"},
+    )
+    return [
+        {
+            "userId": r.get("userId"),
+            "name": _name(r.get("user")),
+            "email": ((r.get("user") or {}).get("contact") or {}).get("email"),
+            "studentId": (r.get("user") or {}).get("studentId"),
+            "role": r.get("courseRoleId"),
+        }
+        for r in rows
+    ]
 
 
 # --------------------------------------------------------------------------
-# read
+# read — account and course
 # --------------------------------------------------------------------------
 
 
 @mcp.tool()
 async def bb_whoami() -> dict:
     """Who the token acts as. Use this first to confirm auth works."""
-    return await _request("GET", "/v1/users/me")
+    me = await bb._request("GET", "/v1/users/me")
+    return {"id": me.get("id"), "userName": me.get("userName"), "name": _name(me),
+            "auth": "client-credentials"}
+
+
+@mcp.tool()
+async def bb_config() -> dict:
+    """What this server is pointed at and what it is allowed to do."""
+    return {
+        "base_url": bb.BASE_URL,
+        "auth": "client-credentials",
+        "credentials_present": bool(bb.APP_KEY and bb.APP_SECRET),
+        "writes_enabled": bb.ALLOW_WRITES,
+        "grade_writes_enabled": bb.ALLOW_GRADE_WRITES,
+    }
 
 
 @mcp.tool()
 async def bb_list_courses(search: str = "") -> list[dict]:
     """List courses visible to the account. `search` filters on course name."""
     params = {"name": search} if search else None
-    rows = await _paged("/v3/courses", params)
-    return [
-        {"id": c.get("id"), "courseId": c.get("courseId"), "name": c.get("name")}
-        for c in rows
-    ]
+    rows = await bb._paged("/v3/courses", params)
+    return [{"id": c.get("id"), "courseId": c.get("courseId"), "name": c.get("name"),
+             "termId": c.get("termId"), "available": (c.get("availability") or {}).get("available")}
+            for c in rows]
 
 
 @mcp.tool()
-async def bb_list_students(course_id: str) -> list[dict]:
-    """Enrolled users for a course, with their role."""
-    rows = await _paged(f"/v1/courses/{course_id}/users")
-    return [
-        {
-            "userId": r.get("userId"),
-            "role": r.get("courseRoleId"),
-            "name": (r.get("user") or {}).get("name"),
-        }
-        for r in rows
-    ]
+async def bb_get_course(course_id: str) -> dict:
+    """One course: name, term, availability, the URL students open."""
+    c = await bb._request("GET", f"/v3/courses/{course_id}")
+    return {
+        "id": c.get("id"), "courseId": c.get("courseId"), "name": c.get("name"),
+        "termId": c.get("termId"), "ultraStatus": c.get("ultraStatus"),
+        "available": (c.get("availability") or {}).get("available"),
+        "url": c.get("externalAccessUrl"),
+        "created": c.get("created"), "modified": c.get("modified"),
+    }
+
+
+@mcp.tool()
+async def bb_list_students(course_id: str, role: str = "") -> list[dict]:
+    """Enrolled users with name, email, student number and course role.
+
+    `role` filters: Student, Instructor, TeachingAssistant, Grader, Guest.
+    """
+    rows = await _students(course_id)
+    return [r for r in rows if not role or r["role"] == role]
+
+
+# --------------------------------------------------------------------------
+# read — content
+# --------------------------------------------------------------------------
+
+
+def _item(r: dict) -> dict:
+    return {"id": r.get("id"), "title": r.get("title"),
+            "type": (r.get("contentHandler") or {}).get("id"),
+            "available": (r.get("availability") or {}).get("available"),
+            "hasChildren": bool(r.get("hasChildren"))}
 
 
 @mcp.tool()
 async def bb_list_contents(course_id: str, folder_id: str = "") -> list[dict]:
-    """Content items in a course, or inside one folder."""
-    path = (
-        f"/v1/courses/{course_id}/contents/{folder_id}/children"
-        if folder_id
-        else f"/v1/courses/{course_id}/contents"
-    )
-    rows = await _paged(path)
-    return [
-        {"id": r.get("id"), "title": r.get("title"), "type": r.get("contentHandler", {}).get("id")}
-        for r in rows
-    ]
+    """Content items at the top of a course, or inside one folder."""
+    rows = await bb._paged(_contents_path(course_id, folder_id))
+    return [_item(r) for r in rows]
+
+
+@mcp.tool()
+async def bb_content_tree(course_id: str, max_depth: int = 3) -> list[dict]:
+    """The whole course outline as nested folders, down to `max_depth` levels.
+
+    The Ultra outline panel renders blank in a browser session, so this is the
+    way to see what a course actually holds. Hidden items are included with
+    `available: "No"`.
+    """
+    async def walk(parent_id: str, depth: int) -> list[dict]:
+        rows = await bb._paged(_contents_path(course_id, parent_id))
+        out = []
+        for r in rows:
+            node = _item(r)
+            node["children"] = (
+                await walk(node["id"], depth + 1)
+                if node["hasChildren"] and depth < max_depth else []
+            )
+            out.append(node)
+        return out
+
+    return await walk("", 1)
+
+
+@mcp.tool()
+async def bb_get_content(course_id: str, content_id: str) -> dict:
+    """One content item in full: body (BBML), handler, availability, position."""
+    return await bb._request("GET", f"/v1/courses/{course_id}/contents/{content_id}")
+
+
+@mcp.tool()
+async def bb_list_announcements(course_id: str) -> list[dict]:
+    """Course announcements, newest first as Blackboard returns them."""
+    rows = await bb._paged(f"/v1/courses/{course_id}/announcements")
+    return [{"id": r.get("id"), "title": r.get("title"), "created": r.get("created"),
+             "draft": r.get("draft"), "body": r.get("body")} for r in rows]
+
+
+# --------------------------------------------------------------------------
+# read — assessments and gradebook
+# --------------------------------------------------------------------------
 
 
 @mcp.tool()
@@ -247,74 +178,121 @@ async def bb_list_assessments(course_id: str) -> list[dict]:
     """Tests in the course, with the ids needed to read their questions and grades.
 
     There is no /assessments collection in the public API — a test is a content
-    item whose handler is resource/x-bb-asmt-test-link. So this lists course
-    contents and keeps those, surfacing assessmentId (for the questions routes)
-    and gradeColumnId (for the gradebook routes).
+    item whose handler is resource/x-bb-asmt-test-link. This walks the outline
+    and keeps those, surfacing assessmentId (questions routes) and
+    gradeColumnId (gradebook routes).
     """
-    rows = await _paged(f"/v1/courses/{course_id}/contents")
-    out = []
-    for c in rows:
-        h = c.get("contentHandler", {})
-        if h.get("id") != "resource/x-bb-asmt-test-link":
-            continue
-        out.append({
-            "content_id": c.get("id"),
-            "title": c.get("title"),
-            "assessment_id": h.get("assessmentId"),
-            "grade_column_id": h.get("gradeColumnId"),
-            "available": c.get("availability", {}).get("available"),
-            "created": c.get("created"),
-        })
-    return out
+    async def walk(parent_id: str) -> list[dict]:
+        rows = await bb._paged(_contents_path(course_id, parent_id))
+        out = []
+        for c in rows:
+            h = c.get("contentHandler") or {}
+            if h.get("id") == TEST_HANDLER:
+                out.append({
+                    "content_id": c.get("id"), "title": c.get("title"),
+                    "assessment_id": h.get("assessmentId"),
+                    "grade_column_id": h.get("gradeColumnId"),
+                    "available": (c.get("availability") or {}).get("available"),
+                    "created": c.get("created"),
+                })
+            elif c.get("hasChildren"):
+                out.extend(await walk(c["id"]))
+        return out
+
+    return await walk("")
 
 
 @mcp.tool()
 async def bb_list_questions(course_id: str, assessment_id: str) -> list[dict]:
-    """Questions inside one assessment."""
-    return await _paged(f"/v1/courses/{course_id}/assessments/{assessment_id}/questions")
+    """Questions inside one assessment.
+
+    On Ultra each row is an opaque block: id, position and
+    questionHandler.type "QuestionBlock". Text and answers are not exposed.
+    """
+    return await bb._paged(f"/v1/courses/{course_id}/assessments/{assessment_id}/questions")
 
 
 @mcp.tool()
 async def bb_list_gradebook_columns(course_id: str) -> list[dict]:
     """Gradebook columns for a course."""
-    rows = await _paged(f"/v2/courses/{course_id}/gradebook/columns")
-    return [
-        {
-            "id": r.get("id"),
-            "name": r.get("name"),
-            "score": (r.get("score") or {}).get("possible"),
-            "graded": r.get("grading", {}).get("type"),
-        }
-        for r in rows
-    ]
+    rows = await bb._paged(f"/v2/courses/{course_id}/gradebook/columns")
+    return [{"id": r.get("id"), "name": r.get("name"),
+             "possible": (r.get("score") or {}).get("possible"),
+             "grading": (r.get("grading") or {}).get("type"),
+             "contentId": r.get("contentId")} for r in rows]
+
+
+def _score_row(r: dict) -> dict:
+    g = r.get("displayGrade") or {}
+    return {"status": r.get("status"), "score": g.get("score"), "exempt": r.get("exempt")}
+
+
+@mcp.tool()
+async def bb_list_grades(course_id: str, column_id: str) -> dict:
+    """Every student's score on one column, with names — the marks list for a test.
+
+    Students with no entry yet appear with score null.
+    """
+    col = await bb._request("GET", f"/v2/courses/{course_id}/gradebook/columns/{column_id}")
+    scores = {r["userId"]: _score_row(r) for r in
+              await bb._paged(f"/v2/courses/{course_id}/gradebook/columns/{column_id}/users")}
+    rows = []
+    for s in await _students(course_id):
+        if s["role"] != "Student":
+            continue
+        sc = scores.get(s["userId"], {"status": None, "score": None, "exempt": None})
+        rows.append({"userId": s["userId"], "name": s["name"], "email": s["email"],
+                     "studentId": s["studentId"], **sc})
+    return {"column": {"id": col.get("id"), "name": col.get("name"),
+                       "possible": (col.get("score") or {}).get("possible")},
+            "rows": rows}
+
+
+@mcp.tool()
+async def bb_gradebook_report(course_id: str) -> dict:
+    """The whole gradebook: one row per student, one key per column.
+
+    One request per column, so a course with many columns takes a moment.
+    """
+    cols = await bb._paged(f"/v2/courses/{course_id}/gradebook/columns")
+    columns = [{"id": c["id"], "name": c.get("name"),
+                "possible": (c.get("score") or {}).get("possible")} for c in cols]
+    by_col: dict[str, dict[str, Any]] = {}
+    for c in columns:
+        rows = await bb._paged(f"/v2/courses/{course_id}/gradebook/columns/{c['id']}/users")
+        by_col[c["id"]] = {r["userId"]: (r.get("displayGrade") or {}).get("score") for r in rows}
+    out = []
+    for s in await _students(course_id):
+        if s["role"] != "Student":
+            continue
+        out.append({"userId": s["userId"], "name": s["name"], "email": s["email"],
+                    "studentId": s["studentId"],
+                    "scores": {c["id"]: by_col[c["id"]].get(s["userId"]) for c in columns}})
+    return {"columns": columns, "rows": out}
 
 
 @mcp.tool()
 async def bb_list_attempts(course_id: str, column_id: str) -> list[dict]:
-    """Submissions on a gradebook column — what is waiting to be marked."""
-    rows = await _paged(f"/v2/courses/{course_id}/gradebook/columns/{column_id}/attempts")
-    return [
-        {
-            "attemptId": r.get("id"),
-            "userId": r.get("userId"),
-            "status": r.get("status"),
-            "score": r.get("score"),
-            "submitted": r.get("created"),
-        }
-        for r in rows
-    ]
+    """Submissions on a gradebook column — status, score and timestamps."""
+    rows = await bb._paged(f"/v2/courses/{course_id}/gradebook/columns/{column_id}/attempts")
+    return [{"attemptId": r.get("id"), "userId": r.get("userId"), "status": r.get("status"),
+             "score": r.get("score"), "created": r.get("created"),
+             "attemptDate": r.get("attemptDate")} for r in rows]
 
 
 @mcp.tool()
 async def bb_get_attempt(course_id: str, column_id: str, attempt_id: str) -> dict:
-    """One submission in full, including the student's answers."""
-    return await _request(
-        "GET", f"/v2/courses/{course_id}/gradebook/columns/{column_id}/attempts/{attempt_id}"
-    )
+    """One submission: status, readyToPost, score, created/attemptDate/modified.
+
+    The public API does not return the student's answers for an Ultra test;
+    those are only in the Ultra grading view.
+    """
+    return await bb._request(
+        "GET", f"/v2/courses/{course_id}/gradebook/columns/{column_id}/attempts/{attempt_id}")
 
 
 # --------------------------------------------------------------------------
-# write — content and assessments
+# write — content and assessments (BB_ALLOW_WRITES=1)
 # --------------------------------------------------------------------------
 
 
@@ -327,66 +305,93 @@ async def bb_create_content(
     kind: Literal["document", "folder"] = "document",
     available: bool = False,
 ) -> dict:
-    """Add a content item — a document or a folder — to the course page.
+    """Add a document or a folder. Created hidden unless `available=True`.
 
-    Created hidden by default (`available=False`) so nothing appears to
-    students before you have looked at it. In Ultra a document must sit inside
-    a folder that is a page (isBbPage), so pass parent_id for documents.
+    In Ultra a document must sit inside a folder, so pass parent_id for
+    documents. `body_html` is BBML (see bb_post_announcement).
     """
-    path = (
-        f"/v1/courses/{course_id}/contents/{parent_id}/children"
-        if parent_id
-        else f"/v1/courses/{course_id}/contents"
-    )
     handler = {"id": "resource/x-bb-folder"} if kind == "folder" else {"id": "resource/x-bb-document"}
-    payload: dict[str, Any] = {
-        "title": title,
-        "availability": {"available": "Yes" if available else "No"},
-        "contentHandler": handler,
-    }
+    payload: dict[str, Any] = {"title": title,
+                               "availability": {"available": "Yes" if available else "No"},
+                               "contentHandler": handler}
     if body_html:
-        _check_bbml(body_html)
+        check_bbml(body_html)
         payload["body"] = body_html
-    return await _request("POST", path, json=payload, write=True)
+    created = await bb._request("POST", _contents_path(course_id, parent_id), json=payload, write=True)
+    return _item(created)
 
 
 @mcp.tool()
-async def bb_create_assessment(
-    course_id: str,
-    title: str,
-    parent_id: str = "",
-    available: bool = False,
-) -> dict:
-    """Create a test shell. Add questions to it afterwards with bb_add_question.
+async def bb_update_content(course_id: str, content_id: str, title: str = "", body_html: str = "") -> dict:
+    """Change a content item's title and/or body. Only the given fields are sent."""
+    payload: dict[str, Any] = {}
+    if title:
+        payload["title"] = title
+    if body_html:
+        check_bbml(body_html)
+        payload["body"] = body_html
+    if not payload:
+        raise BlackboardError("nothing to change: give title and/or body_html")
+    return await bb._request("PATCH", f"/v1/courses/{course_id}/contents/{content_id}",
+                             json=payload, write=True)
 
-    Since Learn 3900.98 a test is created as a content item with the
-    resource/x-bb-asmt-test-link handler, not through an /assessments route
-    (there is none). The response carries assessmentId — pass that to
-    bb_add_question — and gradeColumnId for the gradebook.
+
+@mcp.tool()
+async def bb_set_availability(course_id: str, content_id: str, available: bool) -> dict:
+    """Show or hide one content item — a folder, a document, a test link.
+
+    Returns the item as Blackboard now holds it: read `available` off the
+    response rather than trust the request.
     """
-    path = (
-        f"/v1/courses/{course_id}/contents/{parent_id}/children"
-        if parent_id
-        else f"/v1/courses/{course_id}/contents"
-    )
-    created = await _request(
-        "POST",
-        path,
-        json={
-            "title": title,
-            "availability": {"available": "Yes" if available else "No"},
-            "contentHandler": {"id": "resource/x-bb-asmt-test-link"},
-        },
-        write=True,
-    )
-    h = created.get("contentHandler", {})
-    return {
-        "content_id": created.get("id"),
-        "title": created.get("title"),
-        "assessment_id": h.get("assessmentId"),
-        "grade_column_id": h.get("gradeColumnId"),
-        "available": created.get("availability", {}).get("available"),
-    }
+    r = await bb._request("PATCH", f"/v1/courses/{course_id}/contents/{content_id}",
+                          json={"availability": {"available": "Yes" if available else "No"}},
+                          write=True)
+    return _item(r)
+
+
+@mcp.tool()
+async def bb_upload_file(course_id: str, parent_id: str, path: str, title: str = "") -> dict:
+    """Upload a local file and add it to a folder as a file item (hidden).
+
+    Two calls: POST /v1/uploads with the bytes, then a child content item with
+    the resource/x-bb-file handler pointing at the upload id. Unverified on
+    this site until scripts/probe_writes.py has run.
+    """
+    import pathlib
+
+    p = pathlib.Path(path).expanduser()
+    if not p.is_file():
+        raise BlackboardError(f"no such file: {p}")
+    up = await bb._request("POST", "/v1/uploads", content=p.read_bytes(),
+                           content_type="application/octet-stream", write=True)
+    created = await bb._request(
+        "POST", _contents_path(course_id, parent_id),
+        json={"title": title or p.name, "availability": {"available": "No"},
+              "contentHandler": {"id": "resource/x-bb-file",
+                                 "file": {"uploadId": up.get("id"), "fileName": p.name}}},
+        write=True)
+    return _item(created)
+
+
+@mcp.tool()
+async def bb_create_assessment(course_id: str, title: str, parent_id: str = "",
+                               available: bool = False) -> dict:
+    """Create a test shell (hidden by default).
+
+    Since Learn 3900.98 a test is a content item with the
+    resource/x-bb-asmt-test-link handler. The response carries assessment_id
+    and grade_column_id. Questions go in through Ultra's Upload Questions:
+    build the file with bb_export_test.
+    """
+    created = await bb._request(
+        "POST", _contents_path(course_id, parent_id),
+        json={"title": title, "availability": {"available": "Yes" if available else "No"},
+              "contentHandler": {"id": TEST_HANDLER}},
+        write=True)
+    h = created.get("contentHandler") or {}
+    return {"content_id": created.get("id"), "title": created.get("title"),
+            "assessment_id": h.get("assessmentId"), "grade_column_id": h.get("gradeColumnId"),
+            "available": (created.get("availability") or {}).get("available")}
 
 
 @mcp.tool()
@@ -398,254 +403,76 @@ async def bb_add_question(
     answers: list[dict] | None = None,
     points: float = 1.0,
 ) -> dict:
-    """Add one question to an assessment.
+    """Add one question to an assessment. `answers`: [{"text", "correct"}].
 
-    `answers` is a list of {"text": str, "correct": bool} — required for
-    MultipleChoice, TrueFalse and MultipleAnswer, ignored for Essay.
-
-    Unverified on Ultra (Learn 4000.x): the questions route answers 200 there
-    but returns question blocks as opaque handles, and this payload is the
-    Original-era shape. Try it on a scratch course before trusting it.
+    Unverified on Ultra: the route answers 200 for reads but returns opaque
+    blocks, and this payload is the Original-era shape. If it fails, use
+    bb_export_test and Upload Questions.
     """
-    payload: dict[str, Any] = {
-        "title": text[:80],
-        "questionType": question_type,
-        "displayText": text,
-        "points": points,
-    }
+    payload: dict[str, Any] = {"title": text[:80], "questionType": question_type,
+                               "displayText": text, "points": points}
     if question_type != "Essay":
         if not answers:
             raise BlackboardError(f"{question_type} needs an `answers` list.")
-        payload["answers"] = [
-            {"displayText": a["text"], "correct": bool(a.get("correct"))} for a in answers
-        ]
-
-    return await _request(
-        "POST",
-        f"/v1/courses/{course_id}/assessments/{assessment_id}/questions",
-        json=payload,
-        write=True,
-    )
+        payload["answers"] = [{"displayText": a["text"], "correct": bool(a.get("correct"))}
+                              for a in answers]
+    return await bb._request("POST", f"/v1/courses/{course_id}/assessments/{assessment_id}/questions",
+                             json=payload, write=True)
 
 
 @mcp.tool()
-async def bb_create_gradebook_column(
-    course_id: str,
-    name: str,
-    points_possible: float,
-    description: str = "",
-) -> dict:
+async def bb_create_gradebook_column(course_id: str, name: str, points_possible: float,
+                                     description: str = "") -> dict:
     """Create a manual gradebook column."""
-    return await _request(
-        "POST",
-        f"/v2/courses/{course_id}/gradebook/columns",
-        json={
-            "name": name,
-            "description": description,
-            "score": {"possible": points_possible},
-            "grading": {"type": "Manual"},
-        },
-        write=True,
-    )
+    return await bb._request("POST", f"/v2/courses/{course_id}/gradebook/columns",
+                             json={"name": name, "description": description,
+                                   "score": {"possible": points_possible},
+                                   "grading": {"type": "Manual"}},
+                             write=True)
 
 
 @mcp.tool()
-async def bb_set_availability(course_id: str, content_id: str, available: bool) -> dict:
-    """Show or hide one content item — a folder, a document, a test link.
-
-    This is how something created hidden gets published to students, and how it
-    is pulled back. Returns the item as Blackboard now holds it, so the caller
-    can read `availability.available` off the response rather than trust the
-    request.
-    """
-    return await _request(
-        "PATCH",
-        f"/v1/courses/{course_id}/contents/{content_id}",
-        json={"availability": {"available": "Yes" if available else "No"}},
-        write=True,
-    )
-
-
-@mcp.tool()
-async def bb_post_announcement(
-    course_id: str,
-    title: str,
-    body_html: str,
-    draft: bool = False,
-) -> dict:
+async def bb_post_announcement(course_id: str, title: str, body_html: str, draft: bool = False) -> dict:
     """Post a course announcement. Students are notified per their own settings.
 
     `body_html` is Blackboard Markup Language, not free HTML: p, ul/ol/li, a
-    with href, strong, em, br, div, span, sub, sup, del, h4–h6. It is checked
-    here before sending, because the server's 400 does not say which tag it
-    objected to. `draft=True` saves without publishing.
-
-    The course announcement object has no email flag; the "send a copy by
-    email" tick exists only in the Ultra UI at creation time.
+    with href, strong, em, br, div, span, sub, sup, del, h4–h6. Checked here
+    because the server's 400 does not say which tag it objected to.
+    `draft=True` saves without publishing. There is no email flag in the API.
     """
-    _check_bbml(body_html)
-    return await _request(
-        "POST",
-        f"/v1/courses/{course_id}/announcements",
-        json={
-            "title": title,
-            "body": body_html,
-            "draft": draft,
-            "availability": {"duration": {"type": "Permanent"}},
-        },
-        write=True,
-    )
-
-
-# --------------------------------------------------------------------------
-# export — a test as Blackboard's upload-questions file
-# --------------------------------------------------------------------------
-#
-# The public API cannot write question content on Ultra (questions come back
-# as opaque blocks). What Ultra does accept is a tab-delimited text file under
-# Test > Upload Questions: one question per line, no header, at most 250 rows,
-# answer markers in lowercase English. This builds that file. It touches no
-# network and needs no write switch: the upload is a click in the UI.
-#
-# Points cannot travel in this file — every question lands at 0 and is given
-# its value in the test after upload. That is the format's limit, not ours.
-
-_BBQ_MAX_ROWS = 250
-_BBQ_MAX_ANSWERS = 100
-
-
-def _bbq_clean(text: str) -> str:
-    """One field: no tabs or newlines, or the row splits in the wrong place."""
-    return re.sub(r"[\t\r\n]+", " ", str(text)).strip()
-
-
-def _bbq_line(q: dict[str, Any], n: int) -> str:
-    kind = str(q.get("type", "")).upper()
-    text = _bbq_clean(q.get("text", ""))
-    if not text:
-        raise BlackboardError(f"question {n}: empty text")
-    answers = q.get("answers") or []
-
-    if kind in ("MC", "MA"):
-        if not answers:
-            raise BlackboardError(f"question {n} ({kind}): needs answers")
-        if len(answers) > _BBQ_MAX_ANSWERS:
-            raise BlackboardError(f"question {n}: at most {_BBQ_MAX_ANSWERS} answers")
-        correct = sum(1 for a in answers if a.get("correct"))
-        if kind == "MC" and correct != 1:
-            raise BlackboardError(f"question {n} (MC): exactly one correct answer, got {correct}")
-        if kind == "MA" and correct < 1:
-            raise BlackboardError(f"question {n} (MA): at least one correct answer")
-        cells = [kind, text]
-        for a in answers:
-            cells += [_bbq_clean(a.get("text", "")), "correct" if a.get("correct") else "incorrect"]
-        return "\t".join(cells)
-
-    if kind == "TF":
-        if "correct" not in q:
-            raise BlackboardError(f"question {n} (TF): set correct: true|false")
-        return "\t".join(["TF", text, "true" if q["correct"] else "false"])
-
-    if kind == "ESS":
-        cells = ["ESS", text]
-        if q.get("example"):
-            cells.append(_bbq_clean(q["example"]))
-        return "\t".join(cells)
-
-    if kind == "NUM":
-        if "answer" not in q:
-            raise BlackboardError(f"question {n} (NUM): needs answer")
-        cells = ["NUM", text, str(q["answer"])]
-        if q.get("tolerance") is not None:
-            cells.append(str(q["tolerance"]))
-        return "\t".join(cells)
-
-    if kind == "FIB":
-        if not answers:
-            raise BlackboardError(f"question {n} (FIB): needs accepted answers")
-        return "\t".join(["FIB", text] + [_bbq_clean(a if isinstance(a, str) else a.get("text", "")) for a in answers])
-
-    raise BlackboardError(f"question {n}: unknown type {kind!r}; use MC, MA, TF, ESS, NUM or FIB")
+    check_bbml(body_html)
+    return await bb._request("POST", f"/v1/courses/{course_id}/announcements",
+                             json={"title": title, "body": body_html, "draft": draft,
+                                   "availability": {"duration": {"type": "Permanent"}}},
+                             write=True)
 
 
 @mcp.tool()
 async def bb_export_test(questions: list[dict], path: str) -> dict:
     """Write a test as the tab-delimited file Ultra accepts under Upload Questions.
 
-    Each question is a dict with `type` and `text`, plus:
-      MC / MA  — `answers`: [{"text": str, "correct": bool}, ...]  (MC: exactly one correct)
-      TF       — `correct`: true|false
-      ESS      — optional `example` (a model answer, shown to graders)
-      NUM      — `answer`: number, optional `tolerance`
-      FIB      — `answers`: [str, ...] accepted answers
-
-    Writes UTF-8, no header, at most 250 rows. Then in Ultra: open the test,
-    "+" > Upload Questions > pick this file. Points are NOT carried by this
-    format: every question arrives at 0 and is set in the test afterwards. The
-    result says so, with the count, so nobody uploads and forgets.
+    Each question: `type` and `text`, plus
+      MC / MA — `answers`: [{"text", "correct"}] (MC: exactly one correct)
+      TF — `correct`: true|false;  ESS — optional `example`
+      NUM — `answer`, optional `tolerance`;  FIB — `answers`: [str]
+    Max 250 rows. Points are NOT carried: every question arrives at 0.
+    No network, no write switch: the upload is a click in Ultra.
     """
-    if not questions:
-        raise BlackboardError("no questions")
-    if len(questions) > _BBQ_MAX_ROWS:
-        raise BlackboardError(f"Blackboard takes at most {_BBQ_MAX_ROWS} questions per file; got {len(questions)}. Split it.")
-    lines = [_bbq_line(q, i + 1) for i, q in enumerate(questions)]
-    out = pathlib.Path(path).expanduser()
-    if out.suffix.lower() != ".txt":
-        out = out.with_suffix(".txt")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    by_type: dict[str, int] = {}
-    for ln in lines:
-        by_type[ln.split("\t", 1)[0]] = by_type.get(ln.split("\t", 1)[0], 0) + 1
-    return {
-        "path": str(out),
-        "questions": len(lines),
-        "by_type": by_type,
-        "points": "NOT in the file — set them in the test after upload; all arrive at 0",
-        "next": "Ultra: open the test > + > Upload Questions > this file",
-    }
+    return export.write_test(questions, path)
 
 
 # --------------------------------------------------------------------------
-# write — grades (separate switch)
+# write — grades (BB_ALLOW_GRADE_WRITES=1)
 # --------------------------------------------------------------------------
 
 
 @mcp.tool()
-async def bb_set_grade(
-    course_id: str,
-    column_id: str,
-    user_id: str,
-    score: float,
-    feedback: str = "",
-) -> dict:
-    """Post a grade for one student on one column.
-
-    Needs BB_ALLOW_GRADE_WRITES=1. This writes to the official gradebook and
-    the student sees it — check the column and the user id before calling.
-    """
-    return await _request(
-        "PATCH",
-        f"/v1/courses/{course_id}/gradebook/columns/{column_id}/users/{user_id}",
-        json={"score": score, "feedback": feedback},
-        grade_write=True,
-    )
-
-
-# --------------------------------------------------------------------------
-
-
-@mcp.tool()
-async def bb_config() -> dict:
-    """What this server is pointed at and what it is allowed to do."""
-    return {
-        "base_url": BASE_URL,
-        "auth_mode": "session-token" if SESSION_TOKEN else "client-credentials",
-        "session_token_present": bool(SESSION_TOKEN),
-        "credentials_present": bool(APP_KEY and APP_SECRET),
-        "writes_enabled": ALLOW_WRITES,
-        "grade_writes_enabled": ALLOW_GRADE_WRITES,
-    }
+async def bb_set_grade(course_id: str, column_id: str, user_id: str, score: float,
+                       feedback: str = "") -> dict:
+    """Post a grade for one student on one column. The student sees it."""
+    return await bb._request("PATCH",
+                             f"/v2/courses/{course_id}/gradebook/columns/{column_id}/users/{user_id}",
+                             json={"score": score, "feedback": feedback}, grade_write=True)
 
 
 def main() -> None:
