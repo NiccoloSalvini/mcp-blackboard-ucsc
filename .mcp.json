@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "blackboard": {
+      "command": ".venv/bin/python",
+      "args": ["-m", "bb_mcp.server"],
+      "env": {"PYTHONPATH": "src"}
+    }
+  }
+}
