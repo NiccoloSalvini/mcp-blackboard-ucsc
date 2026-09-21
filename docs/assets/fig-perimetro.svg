@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="335" viewBox="0 0 900 335" font-family="Libre Franklin, Helvetica, Arial, sans-serif" font-size="15">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#193458"/>
+    </marker>
+    <marker id="arrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa3ad"/>
+    </marker>
+  </defs>
+
+  <!-- perimetro locale -->
+  <rect x="20" y="20" width="520" height="300" rx="14" fill="#eef3f8" stroke="#193458" stroke-width="2"/>
+  <text x="40" y="50" font-size="17" font-weight="700" fill="#193458">Il computer del docente</text>
+  <text x="40" y="72" fill="#4a4a4a">tutto ciò che è dentro questo riquadro non lascia la macchina</text>
+
+  <rect x="40" y="95" width="150" height="90" rx="10" fill="#ffffff" stroke="#193458" stroke-width="1.5"/>
+  <text x="115" y="125" text-anchor="middle" font-weight="700" fill="#193458">Modello locale</text>
+  <text x="115" y="146" text-anchor="middle" fill="#4a4a4a" font-size="13">capisce la richiesta,</text>
+  <text x="115" y="163" text-anchor="middle" fill="#4a4a4a" font-size="13">propone il passo</text>
+
+  <rect x="215" y="95" width="150" height="90" rx="10" fill="#ffffff" stroke="#193458" stroke-width="1.5"/>
+  <text x="290" y="125" text-anchor="middle" font-weight="700" fill="#193458">Harness locale</text>
+  <text x="290" y="146" text-anchor="middle" fill="#4a4a4a" font-size="13">applica le regole,</text>
+  <text x="290" y="163" text-anchor="middle" fill="#4a4a4a" font-size="13">chiede conferma</text>
+
+  <rect x="390" y="95" width="130" height="90" rx="10" fill="#ffffff" stroke="#193458" stroke-width="1.5"/>
+  <text x="455" y="125" text-anchor="middle" font-weight="700" fill="#193458">Server MCP</text>
+  <text x="455" y="146" text-anchor="middle" fill="#4a4a4a" font-size="13">38 strumenti,</text>
+  <text x="455" y="163" text-anchor="middle" fill="#4a4a4a" font-size="13">3 livelli di permesso</text>
+
+  <line x1="190" y1="140" x2="213" y2="140" stroke="#193458" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="365" y1="140" x2="388" y2="140" stroke="#193458" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- dati locali -->
+  <rect x="40" y="215" width="480" height="85" rx="10" fill="#ffffff" stroke="#0862a8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="60" y="242" font-weight="700" fill="#0862a8">Dati personali che transitano qui</text>
+  <text x="60" y="264" fill="#4a4a4a" font-size="13">nomi, email, matricole, voti, file consegnati dagli studenti</text>
+  <text x="60" y="284" fill="#4a4a4a" font-size="13">restano su disco locale, nella cartella del corso, e vengono usati solo dal modello locale</text>
+
+  <!-- Blackboard -->
+  <rect x="705" y="95" width="180" height="90" rx="10" fill="#193458"/>
+  <text x="795" y="125" text-anchor="middle" font-weight="700" fill="#ffffff">Blackboard Learn</text>
+  <text x="795" y="146" text-anchor="middle" fill="#dfe7f0" font-size="13">blackboard.unicatt.it</text>
+  <text x="795" y="163" text-anchor="middle" fill="#dfe7f0" font-size="13">API REST ufficiale</text>
+
+  <line x1="522" y1="140" x2="703" y2="140" stroke="#193458" stroke-width="2" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  <text x="612" y="122" text-anchor="middle" fill="#193458" font-size="12" font-weight="700">HTTPS</text>
+  <text x="612" y="166" text-anchor="middle" fill="#4a4a4a" font-size="12">token OAuth2 dell'app,</text>
+  <text x="612" y="182" text-anchor="middle" fill="#4a4a4a" font-size="12">stessi permessi del docente</text>
+
+  <!-- cloud AI, optional -->
+  <rect x="705" y="230" width="180" height="80" rx="10" fill="#f5f6f7" stroke="#9aa3ad" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="795" y="257" text-anchor="middle" font-weight="700" fill="#6b7480">Servizi AI in cloud</text>
+  <text x="795" y="278" text-anchor="middle" fill="#6b7480" font-size="13">opzionali, solo testi senza</text>
+  <text x="795" y="295" text-anchor="middle" fill="#6b7480" font-size="13">dati personali (es. domande)</text>
+  <line x1="522" y1="270" x2="703" y2="270" stroke="#9aa3ad" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrg)"/>
+  <text x="612" y="262" text-anchor="middle" fill="#6b7480" font-size="12">mai dati di studenti</text>
+
+</svg>
