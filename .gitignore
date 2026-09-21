@@ -13,3 +13,6 @@ docs/mcp-blackboard-ucsc.typ
 
 # the rendered note: published once it has actually been sent to the university
 docs/*.pdf
+
+# working notes from the planning skill: process artefacts, not product
+docs/superpowers/
