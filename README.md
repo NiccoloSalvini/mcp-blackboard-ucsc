@@ -13,7 +13,12 @@ This one talks to the LMS.
 OAuth2 client credentials, nothing else. The application is registered at
 [developer.anthology.com](https://developer.anthology.com/) and the Blackboard
 administrator at Cattolica added its Application ID under *Admin → REST API
-Integrations*, bound to the instructor's user (done 18 September 2026). So the
+Integrations*, bound to the instructor's user (done 18 September 2026).
+
+**Setting this up at your own institution: [docs/access.md](docs/access.md)** —
+the registration is the one step you cannot do yourself, and that page carries a
+request you can paste, what the administrator has to click, and what each failure
+means. So the
 token acts as that user — `bb_whoami` answers with the instructor's account —
 with scope `read write delete`, lives an hour, and the server fetches a new
 one by itself: once when the cache runs out, and once more if a request
