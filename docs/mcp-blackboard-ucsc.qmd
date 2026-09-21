@@ -178,7 +178,7 @@ Le domande nel forum del corso si leggono con gli autori e si riassumono in una 
 
 # Pubblicazione con licenza aperta
 
-Intendo pubblicare il codice con **licenza MIT** in un repository pubblico. Il repository contiene il codice, i test, la documentazione e questa nota. **Non contiene** credenziali (il file che le custodisce è escluso dal controllo di versione fin dal primo giorno), né dati di studenti, né materiali di correzione, né esami. Gli identificativi dei corsi che compaiono negli esempi sono quelli dei miei corsi e non danno accesso ad alcunché senza un'applicazione registrata dall'Ateneo.
+Il codice è pubblico su GitHub con **licenza MIT**: <https://github.com/NiccoloSalvini/mcp-blackboard-ucsc>. Il repository contiene il codice, i test, la documentazione e il sorgente di questa nota. **Non contiene** credenziali (il file che le custodisce è escluso dal controllo di versione fin dal primo giorno), né dati di studenti, né materiali di correzione, né esami: anche negli esempi dei test nomi e matricole sono inventati. Gli identificativi dei corsi che compaiono negli esempi sono quelli dei miei corsi e non danno accesso ad alcunché senza un'applicazione registrata dall'Ateneo.
 
 Le ragioni sono tre. La prima è la **trasparenza verso l'Ateneo**: chiunque, in Cattolica, può leggere esattamente cosa lo strumento fa e cosa non fa. La seconda è l'**utilità per altri docenti**: Blackboard Ultra è usato in centinaia di università, e lo strumento è riutilizzabile ovunque cambiando un indirizzo e una coppia di credenziali. La terza è la **verificabilità delle scelte sui dati**: le garanzie descritte al capitolo 3 non sono una dichiarazione, sono righe di codice che chiunque può controllare.
 
@@ -195,6 +195,6 @@ Le ragioni sono tre. La prima è la **trasparenza verso l'Ateneo**: chiunque, in
 
 Chiedo una **presa d'atto** di questa iniziativa e, se ritenuto utile, un confronto con i referenti Blackboard di Facoltà e con il responsabile della protezione dei dati, per verificare che le scelte descritte al capitolo 3 siano allineate alle policy di Ateneo. Sono disponibile a presentare lo strumento e a condividerlo con i colleghi interessati.
 
-Da parte mia, i prossimi passi sono: completare la verifica delle scritture sul corso 2026-27 con lo script descritto; costruire la banca domande e generare da lì il primo intermedio di ottobre; usare il flusso dei compiti sulle prime esercitazioni dell'autunno e misurare il tempo di correzione risparmiato; pubblicare il repository.
+Da parte mia, i prossimi passi sono: completare la verifica delle scritture sul corso 2026-27 con lo script descritto; costruire la banca domande e generare da lì il primo intermedio di ottobre; usare il flusso dei compiti sulle prime esercitazioni dell'autunno e misurare il tempo di correzione risparmiato; provare il caricamento su SVE al primo appello utile, che è l'unico passaggio non ancora verificato.
 
 *Contatti: niccolo.salvini@unicatt.it*
