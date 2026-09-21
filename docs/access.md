@@ -23,7 +23,7 @@ that takes days, because it waits on somebody else.
 2. Create an application. Give it a name you will recognise, e.g.
    *"Course tools — <your name>"*.
 3. You get three values:
-   - **Application ID** — a UUID like `942d59a9-…`. Not a secret: the
+   - **Application ID** — a UUID like `3f7b2c10-9d4e-4a81-b6f2-0c55ad1e77b9`. Not a secret: the
      administrator needs it, and it is useless without the other two.
    - **Key** and **Secret** — these *are* secrets. They go in your local `.env`
      as `BB_APP_KEY` and `BB_APP_SECRET`, and nowhere else. Never mail them.
