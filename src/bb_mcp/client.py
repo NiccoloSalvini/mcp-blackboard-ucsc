@@ -86,8 +86,7 @@ async def _request(
     *,
     json: dict[str, Any] | None = None,
     params: dict[str, Any] | None = None,
-    content: bytes | None = None,
-    content_type: str | None = None,
+    files: dict[str, Any] | None = None,
     write: bool = False,
     grade_write: bool = False,
 ) -> Any:
@@ -99,10 +98,10 @@ async def _request(
 
     async with httpx.AsyncClient(timeout=60) as client:
         token = await _access_token(client)
-        resp = await _send(client, token, method, path, json, params, content, content_type)
+        resp = await _send(client, token, method, path, json, params, files)
         if resp.status_code == 401:
             token = await _access_token(client, force=True)
-            resp = await _send(client, token, method, path, json, params, content, content_type)
+            resp = await _send(client, token, method, path, json, params, files)
 
     if resp.status_code == 404:
         raise BlackboardError(f"Not found: {method} {path}")
@@ -113,13 +112,28 @@ async def _request(
     return resp.json()
 
 
-async def _send(client, token, method, path, json, params, content, content_type) -> httpx.Response:
-    headers = {"Authorization": f"Bearer {token}"}
-    if content_type:
-        headers["Content-Type"] = content_type
+async def _send(client, token, method, path, json, params, files=None) -> httpx.Response:
+    """`files` is httpx's multipart form: {"file": (name, bytes)} — what /v1/uploads takes."""
     return await client.request(
-        method, f"{API}{path}", headers=headers, json=json, params=params, content=content,
+        method, f"{API}{path}", headers={"Authorization": f"Bearer {token}"},
+        json=json, params=params, files=files,
     )
+
+
+async def _download(path: str) -> bytes:
+    """GET a file route and return the bytes. Follows the redirect Learn answers
+    with for attempt-file downloads. Read-only, so no write switch."""
+    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+        token = await _access_token(client)
+        resp = await client.request("GET", f"{API}{path}", headers={"Authorization": f"Bearer {token}"})
+        if resp.status_code == 401:
+            token = await _access_token(client, force=True)
+            resp = await client.request("GET", f"{API}{path}", headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code == 404:
+        raise BlackboardError(f"Not found: GET {path}")
+    if resp.status_code >= 400:
+        raise BlackboardError(f"{resp.status_code} on GET {path}: {resp.text[:500]}")
+    return resp.content
 
 
 async def _paged(path: str, params: dict[str, Any] | None = None, limit: int = 200) -> list[dict]:

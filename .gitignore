@@ -4,3 +4,12 @@ __pycache__/
 *.egg-info/
 uv.lock
 .omc/
+
+# student data and exam material never enter the repo
+submissions/
+exams/
+*.csv
+docs/mcp-blackboard-ucsc.typ
+
+# the rendered note: published once it has actually been sent to the university
+docs/*.pdf
