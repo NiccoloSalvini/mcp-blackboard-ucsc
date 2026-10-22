@@ -261,21 +261,31 @@ project) and `<name>.json`, the manifest with the ids drawn. `ids` instead
 of a draw fixes a paper by hand. Points are not in the file:
 `bb_set_question_points` after the upload, or Ultra.
 
-**Question banks, on Ultra's private API** (`bb_ultra_connect`, `bb_banks_list`,
-`bb_bank_create`, `bb_bank_add_questions`, `bb_banks_from_pool`, `bb_bank_delete`).
+**Question banks and tests, on Ultra's private API** (`bb_ultra_connect`,
+`bb_banks_list`, `bb_bank_create`, `bb_bank_add_questions`, `bb_banks_from_pool`,
+`bb_bank_delete`, `bb_assessment_questions`, `bb_assessment_clear`, `bb_test_fill`).
 What the public API refuses, the Ultra interface does through `/learn/api/v1/…`
 as the signed-in user — observed by recording the interface on 4001.2.0,
 22 October 2026: `POST /courses/{c}/assessments {"title", "type": "Pool"}` makes
 a bank, `POST …/assessments/{bank}/questions` adds a question as JSON (`essay`,
-`eitherOr`, `multipleChoice`, …) with its topic and difficulty **tags**, the ones
-Ultra's bank filter and question pools use. The session is the lecturer's own
+`eitherOr`, `multipleanswer` with `singleCorrectAnswer` for a multiple choice);
+tags are objects of a shape not yet recorded, so none are sent — the bank is
+the topic. The session is the lecturer's own
 browser session: start Chrome with `--remote-debugging-port=9223
 --user-data-dir=<folder>`, sign in to Blackboard there, then `bb_ultra_connect`
 takes the session from it over DevTools and keeps it in this process only, for
 as long as the browser's session lasts (three hours here). `bb_banks_from_pool`
 makes one bank per topic from a pool file, every question tagged, and skips
-banks that already exist, so it can be rerun. In the test, a *question pool*
-(Ultra's random block) then draws k questions from a bank. Undocumented API:
+banks that already exist, so it can be rerun. A test is an assessment on the
+same route, so `bb_test_fill` puts a `bb_build_exam` manifest straight into a
+test, in the paper's order and at its points, with `replace` to empty it
+first; `bb_assessment_questions` reads any bank or test back (text, answers,
+correct flags, points) to check it against the pool file, and
+`bb_assessment_clear` deletes questions, including the question pools and
+essays the public API refuses ("Invalid Question Type for update or delete").
+A *question pool* in a test (Ultra's random block, k questions from a bank)
+reads back as `questionBlock`; the request that creates one was not captured,
+so pools are still added in the interface. Undocumented API:
 it can change with any Learn release; the public API keeps doing everything
 else, and `bb_add_question`'s refusal still stands for it.
 

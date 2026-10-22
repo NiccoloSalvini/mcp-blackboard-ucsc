@@ -9,8 +9,19 @@ recording the interface with Chrome DevTools:
     POST /learn/api/v1/courses/{c}/assessments            {"title": …, "type": "Pool"}   → a question bank
     POST /learn/api/v1/courses/{c}/assessments/{a}/questions   one question, JSON per type (below)
     GET  /learn/api/v1/courses/{c}/assessments?types=Pool  the banks
+    GET  /learn/api/v1/courses/{c}/assessments/{a}/questions   the questions, banks and tests alike
+    DELETE …/assessments/{a}/questions/{q}                 one question — also a question pool
+                                                           (`questionBlock`) or an essay the public
+                                                           API refuses ("Invalid Question Type")
     POST /learn/api/v1/files  +  POST …/courses/{c}/imports?fileLocation=…   import a package
     POST /learn/api/v1/courses/{c}/exports                 export a bank
+
+A test is an assessment too (`"type": "Test"`), so the same question route
+fills a test directly — no bank, no pool — which is how a fixed paper such
+as a mock is deployed. A question pool reads back as
+`{"questionType": "questionBlock", "pointsPerQuestion", "numOfQuestionsToChoose",
+"numOfAvailableQuestions"}`; the request that creates one (which bank, which
+questions) was never captured, so pools are still made in the interface.
 
 Undocumented: it can change with any Learn release, and it needs a signed-in
 browser. The session comes from a Chrome started with
@@ -140,3 +151,26 @@ async def add_question(course_id: str, bank_id: str, q: dict[str, Any], points: 
 async def delete_bank(course_id: str, bank_id: str) -> dict[str, Any]:
     await _call("DELETE", f"/courses/{course_id}/assessments/{bank_id}")
     return {"deleted": bank_id}
+
+
+def question_summary(q: dict[str, Any]) -> dict[str, Any]:
+    """A question as Ultra returns it, reduced to what a check needs (no ids inside answers)."""
+    return {"id": q.get("id"), "type": q.get("questionType"), "points": q.get("points"), "position": q.get("position"),
+            "text": (q.get("questionText") or {}).get("rawText"),
+            "answer_tf": q.get("answer"), "singleCorrectAnswer": q.get("singleCorrectAnswer"),
+            "answers": [{"text": (a.get("answerText") or {}).get("rawText"), "correct": a.get("correctAnswer")}
+                        for a in (q.get("answers") or [])],
+            "model_answer": (q.get("answerText") or {}).get("rawText"),
+            "pool": ({k: q.get(k) for k in ("pointsPerQuestion", "numOfQuestionsToChoose", "numOfAvailableQuestions")}
+                     if q.get("questionType") == "questionBlock" else None)}
+
+
+async def list_questions(course_id: str, assessment_id: str) -> list[dict[str, Any]]:
+    """Every question of a bank or a test, as Ultra holds it."""
+    r = await _call("GET", f"/courses/{course_id}/assessments/{assessment_id}/questions", params={"limit": 100, "offset": 0})
+    return [question_summary(q) for q in r.get("results", [])]
+
+
+async def delete_question(course_id: str, assessment_id: str, question_id: str) -> dict[str, Any]:
+    await _call("DELETE", f"/courses/{course_id}/assessments/{assessment_id}/questions/{question_id}")
+    return {"deleted": question_id}

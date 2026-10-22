@@ -41,3 +41,14 @@ def test_client_without_session_is_refused():
     ultra._session.clear()
     with pytest.raises(BlackboardError, match="bb_ultra_connect"):
         ultra._client()
+
+
+def test_question_summary_reads_a_pool_and_an_mc():
+    pool = {"id": "_9_1", "questionType": "questionBlock", "pointsPerQuestion": 1.5, "numOfQuestionsToChoose": 3,
+            "numOfAvailableQuestions": 10, "position": 1}
+    s = ultra.question_summary(pool)
+    assert s["type"] == "questionBlock" and s["pool"] == {"pointsPerQuestion": 1.5, "numOfQuestionsToChoose": 3, "numOfAvailableQuestions": 10}
+    mc = {"id": "_8_1", "questionType": "multipleanswer", "points": 1.5, "singleCorrectAnswer": True,
+          "questionText": {"rawText": "Q?"}, "answers": [{"id": "x", "answerText": {"rawText": "<p>a</p>"}, "correctAnswer": True}]}
+    s = ultra.question_summary(mc)
+    assert s["text"] == "Q?" and s["answers"] == [{"text": "<p>a</p>", "correct": True}] and s["pool"] is None
