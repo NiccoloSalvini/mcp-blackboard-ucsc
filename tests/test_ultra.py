@@ -20,7 +20,7 @@ def test_true_false_json():
 def test_multiple_choice_json_marks_the_correct_answer():
     q = {"id": "A1", "type": "MC", "text": "M?", "answers": [{"text": "yes", "correct": True}, {"text": "no", "correct": False}]}
     j = ultra.question_json("_1_1", "_2_1", q, 1.0)
-    assert j["questionType"] == "multiplechoice" and j["singleCorrectAnswer"] is True
+    assert j["questionType"] == "multipleanswer" and j["singleCorrectAnswer"] is True
     assert [a["correctAnswer"] for a in j["answers"]] == [True, False]
     assert j["answers"][0]["answerText"]["rawText"] == "<p>yes</p>" and j["answers"][0]["id"].startswith("new_")
     assert j["answersCount"] == 2 and j["answerSelectionLimit"] == 1

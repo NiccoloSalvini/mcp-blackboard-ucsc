@@ -109,7 +109,9 @@ def question_json(course_id: str, assessment_id: str, q: dict[str, Any], points:
         # client-side id, `correctAnswer`, and the counts Ultra shows in the editor.
         answers = q.get("answers") or []
         n_correct = sum(1 for a in answers if a.get("correct"))
-        return {**base, "questionType": "multiplechoice" if kind == "MC" else "multipleanswer",
+        # Ultra has one type for both: "multipleanswer" with singleCorrectAnswer true for a multiple
+        # choice. "multipleChoice" exists but answers "Read only question type" (Original's).
+        return {**base, "questionType": "multipleanswer",
                 "positionAfter": "start",
                 "answers": [{"id": f"new_{uuid.uuid4()}", "answerText": {"rawText": f"<p>{a.get('text', '')}</p>"},
                              "correctAnswer": bool(a.get("correct"))} for a in answers],
