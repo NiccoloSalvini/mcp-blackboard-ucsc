@@ -96,8 +96,8 @@ Everything is created **hidden** unless asked otherwise.
 submission; `post=True` releases it) and `bb_set_grade` (override the column
 grade). Their own switch because a wrong mark reaches students directly.
 
-**No network** — `bb_export_test`, `bb_export_gradebook_csv` (reads, then
-writes a local CSV).
+**No network** — `bb_export_test`, `bb_pool_check`, `bb_build_exam`, `bb_api_doc`,
+`bb_export_gradebook_csv` (reads, then writes a local CSV).
 
 **Second set** (`src/bb_mcp/tools_more.py`, same switches):
 
@@ -244,6 +244,27 @@ limit, attempts and results release are set in the same screen — the API does
 not expose them either. A release date does go through the API:
 `bb_release_by_date` on the test's content id makes it `PartiallyVisible`
 until the start, which is Ultra's "show on" date.
+
+**Exams from question pools** (`bb_pool_check`, `bb_build_exam`; no network).
+A pool is a JSON file kept outside this repo — it is an answer key — with one
+entry per question in the `bb_export_test` shape plus `id`, `topic`,
+`difficulty` (easy | medium | challenging) and, for the key, `why` (TF),
+`example` and `partial` (ESS). One pool per module. `bb_build_exam` draws a
+paper: `mix` says how many of each type, `pools` with `share` says where from
+(a midterm: its module's pool at share 1; the full exam: both pools at 0.5
+each, so half the questions come from each module), `seed` makes the draw
+reproducible, `exclude_manifests` keeps every id of earlier papers out, so a
+midterm never repeats the mock and the full exam never repeats a midterm.
+It writes `<name>-upload.txt` (the Upload Questions file), `<name>-key.qmd`
+(the paper with the key; `quarto render --to typst` outside any website
+project) and `<name>.json`, the manifest with the ids drawn. `ids` instead
+of a draw fixes a paper by hand. Points are not in the file:
+`bb_set_question_points` after the upload, or Ultra.
+
+**The API's own swagger** is in `docs/learn-swagger-<version>.json`
+(`scripts/fetch_swagger.py` refreshes it for the server's version) and
+`bb_api_doc("Create Question")` searches it: paths, summaries, descriptions,
+schemas. Read it before assuming a route exists.
 
 **Bodies are BBML, not HTML.** Content and announcement bodies take `p`,
 `ul`/`ol`/`li`, `a` with `href`, `strong`, `em`, `br`, `div`, `span`, `sub`,
