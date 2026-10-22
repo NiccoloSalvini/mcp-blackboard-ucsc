@@ -460,26 +460,55 @@ async def bb_create_assessment(course_id: str, title: str, parent_id: str = "",
 async def bb_add_question(
     course_id: str,
     assessment_id: str,
-    question_type: Literal["MultipleChoice", "TrueFalse", "Essay", "MultipleAnswer"],
+    question_type: Literal["Presentation", "MultipleChoice", "TrueFalse", "Essay", "MultipleAnswer"],
     text: str,
     answers: list[dict] | None = None,
-    points: float = 1.0,
+    points: float = 0.0,
 ) -> dict:
-    """Add one question to an assessment. `answers`: [{"text", "correct"}].
+    """Add a question to an assessment. On Ultra, only a *Presentation* one.
 
-    Unverified on Ultra: the route answers 200 for reads but returns opaque
-    blocks, and this payload is the Original-era shape. If it fails, use
-    bb_export_test and Upload Questions.
+    Verified on 4000.21.0 (22 Oct 2026): `POST …/questions` accepts `title`,
+    `text`, `points` and `questionHandler.type`, and answers with
+    "Creating non-presentation questions is not supported." to any type but
+    Presentation — a text block with no answers and no points, useful for
+    instructions at the top of a test. A scored question (`MultipleChoice`,
+    `TrueFalse`, `Essay`, `MultipleAnswer`) is refused here before any request:
+    write the test with `bb_export_test` and load it with Test > + > Upload
+    Questions, then `bb_set_question_points`.
     """
-    payload: dict[str, Any] = {"title": text[:80], "questionType": question_type,
-                               "displayText": text, "points": points}
-    if question_type != "Essay":
-        if not answers:
-            raise BlackboardError(f"{question_type} needs an `answers` list.")
-        payload["answers"] = [{"displayText": a["text"], "correct": bool(a.get("correct"))}
-                              for a in answers]
+    if question_type != "Presentation":
+        raise BlackboardError(
+            f"Ultra's public API does not create {question_type} questions "
+            '("Creating non-presentation questions is not supported"). '
+            "Use bb_export_test and Upload Questions, then bb_set_question_points.")
+    if answers:
+        raise BlackboardError("a Presentation question has no answers.")
+    payload: dict[str, Any] = {"title": text[:80], "text": text}
     return await bb._request("POST", f"/v1/courses/{course_id}/assessments/{assessment_id}/questions",
                              json=payload, write=True)
+
+
+@mcp.tool()
+async def bb_set_question_points(course_id: str, assessment_id: str, points: float,
+                                 question_ids: list[str] | None = None) -> dict:
+    """Set the points of every question in a test (or of `question_ids` only).
+
+    Upload Questions lands every question at 0; this is the step after it.
+    `PATCH …/questions/{id}` takes `points` and answers 200; a Presentation
+    block keeps 0 whatever is sent. Returns the points as Blackboard now holds
+    them, one entry per question, so a silent refusal shows up.
+    """
+    base = f"/v1/courses/{course_id}/assessments/{assessment_id}/questions"
+    if question_ids is None:
+        rows = (await bb._request("GET", base, params={"limit": 200})).get("results", [])
+        question_ids = [r["id"] for r in rows]
+    out = []
+    for qid in question_ids:
+        r = await bb._request("PATCH", f"{base}/{qid}", json={"points": points}, write=True)
+        out.append({"id": qid, "points": r.get("points"),
+                    "type": (r.get("questionHandler") or {}).get("type")})
+    return {"questions": len(out), "points_requested": points,
+            "not_applied": [o for o in out if o["points"] != points], "results": out}
 
 
 @mcp.tool()

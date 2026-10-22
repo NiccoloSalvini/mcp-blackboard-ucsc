@@ -125,3 +125,38 @@ def test_whoami_merges_user_and_scope(monkeypatch):
     monkeypatch.setattr(client, "_request", req)
     assert run(server.bb_whoami()) == {"id": "_u_1", "userName": "me", "name": "N S",
                                        "auth": "client-credentials"}
+
+
+def test_add_question_refuses_scored_types_before_any_request(monkeypatch):
+    req, calls = fake_api({})
+    monkeypatch.setattr(client, "_request", req)
+    with pytest.raises(client.BlackboardError, match="non-presentation"):
+        run(server.bb_add_question("_1_1", "_2_1", "MultipleChoice", "Q?",
+                                   answers=[{"text": "a", "correct": True}]))
+    assert calls == []
+
+
+def test_add_presentation_question_sends_title_and_text(monkeypatch):
+    req, calls = fake_api({
+        ("POST", "/v1/courses/_1_1/assessments/_2_1/questions"):
+            {"id": "_3_1", "questionHandler": {"type": "Presentation"}, "points": 0.0},
+    })
+    monkeypatch.setattr(client, "_request", req)
+    run(server.bb_add_question("_1_1", "_2_1", "Presentation", "Read this first"))
+    assert calls[0][3] == {"title": "Read this first", "text": "Read this first"}
+
+
+def test_set_question_points_patches_every_question_and_reports_misses(monkeypatch):
+    req, calls = fake_api({
+        ("GET", "/v1/courses/_1_1/assessments/_2_1/questions"):
+            {"results": [{"id": "_3_1"}, {"id": "_4_1"}]},
+        ("PATCH", "/v1/courses/_1_1/assessments/_2_1/questions/_3_1"):
+            {"id": "_3_1", "points": 1.5, "questionHandler": {"type": "QuestionBlock"}},
+        ("PATCH", "/v1/courses/_1_1/assessments/_2_1/questions/_4_1"):
+            {"id": "_4_1", "points": 0.0, "questionHandler": {"type": "Presentation"}},
+    })
+    monkeypatch.setattr(client, "_request", req)
+    out = run(server.bb_set_question_points("_1_1", "_2_1", 1.5))
+    assert out["questions"] == 2
+    assert [o["id"] for o in out["not_applied"]] == ["_4_1"]
+    assert all(c[3] == {"points": 1.5} for c in calls if c[0] == "PATCH")

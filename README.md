@@ -85,7 +85,8 @@ files a student handed in, saved locally).
 **Writes** (`BB_ALLOW_WRITES=1`) — `bb_create_content`, `bb_update_content`,
 `bb_delete_content`, `bb_set_availability`, `bb_upload_file`,
 `bb_create_assessment`, `bb_prepare_exam` (test shell + upload file in one
-go), `bb_add_question`, `bb_create_assignment` (homework: content + column +
+go), `bb_add_question` (Presentation blocks only, see below),
+`bb_set_question_points`, `bb_create_assignment` (homework: content + column +
 points + due date in one POST), `bb_create_gradebook_column`,
 `bb_update_gradebook_column`, `bb_post_announcement`,
 `bb_update_announcement`, `bb_delete_announcement`.
@@ -142,7 +143,7 @@ Not possible on Ultra via the public API: course messages (400), a custom
 grade schema such as 18–30 e lode (`POST /gradebook/schemas` is Classic-only),
 question bodies (see below).
 
-Unverified on this site: `bb_add_question`, `bb_upload_file`,
+Unverified on this site: `bb_upload_file`,
 `bb_create_assignment`, `bb_update_gradebook_column`, `bb_update_announcement`,
 `bb_delete_announcement`, `bb_delete_content`, `bb_grade_attempt`. Run
 `BB_ALLOW_WRITES=1 PYTHONPATH=src .venv/bin/python scripts/probe_writes.py`
@@ -177,7 +178,9 @@ on 18 September 2026 against the API reference for that build:
 | `PATCH /v1/courses/{id}/contents/{cid}` | `bb_update_content`, `bb_set_availability` | 200 |
 | `GET/POST /v1/courses/{id}/announcements` | announcements | 200 / 201 |
 | `GET /v1/courses/{id}/assessments/{aid}/questions` | `bb_list_questions` | 200, **opaque** (see below) |
-| `POST …/questions` | `bb_add_question` | unverified |
+| `POST …/questions` | `bb_add_question` | 201 for `Presentation`; **400 "Creating non-presentation questions is not supported"** for every scored type |
+| `PATCH …/questions/{qid}` | `bb_set_question_points` | 200 |
+| `DELETE …/questions/{qid}` | — | 200 |
 | `GET/POST /v2/courses/{id}/gradebook/columns` | columns | 200 |
 | `GET /v2/…/columns/{cid}/users` | `bb_list_grades`, `bb_gradebook_report` | 200 |
 | `GET /v2/…/columns/{cid}/attempts[/{aid}]` | attempts | 200 — score, status, dates; **no answers** |
@@ -209,10 +212,14 @@ There is **no `/assessments` collection** in the public API. A test is a content
 item: `POST /contents` with `contentHandler.id = "resource/x-bb-asmt-test-link"`
 (Learn ≥ 3900.98); the response carries `assessmentId` and `gradeColumnId`.
 
-**Questions are opaque on Ultra.** List and single question return only `id`,
-`position` and `questionHandler.type: "QuestionBlock"` — no text, no answers.
-So a generated exam reaches Blackboard through **Test > + > Upload Questions**,
-which takes a tab-delimited file. `bb_export_test` writes it:
+**Questions cannot be written on Ultra.** Verified on 4000.21.0 on
+22 October 2026: `POST …/questions` creates a `Presentation` block (title and
+text, no answers, 0 points) and refuses every scored type with *"Creating
+non-presentation questions is not supported"* — whatever the payload. Reads are
+opaque too: list and single question return `id`, `position` and
+`questionHandler.type: "QuestionBlock"`, no text, no answers. So a generated
+exam reaches Blackboard through **Test > + > Upload Questions**, which takes a
+tab-delimited file. `bb_export_test` writes it:
 
 ```
 bb_export_test(questions=[
@@ -227,9 +234,12 @@ bb_export_test(questions=[
 
 One question per line, no header, **at most 250 per file**, MC with exactly one
 correct answer, tabs and newlines scrubbed. **Points do not travel in the file**:
-every question arrives at 0 and gets its value in the test afterwards. Time
+every question arrives at 0; `bb_set_question_points(course, assessment, 1.5)`
+sets them all in one call (`PATCH …/questions/{id}` does take `points`). Time
 limit, attempts and results release are set in the same screen — the API does
-not expose them either.
+not expose them either. A release date does go through the API:
+`bb_release_by_date` on the test's content id makes it `PartiallyVisible`
+until the start, which is Ultra's "show on" date.
 
 **Bodies are BBML, not HTML.** Content and announcement bodies take `p`,
 `ul`/`ol`/`li`, `a` with `href`, `strong`, `em`, `br`, `div`, `span`, `sub`,
