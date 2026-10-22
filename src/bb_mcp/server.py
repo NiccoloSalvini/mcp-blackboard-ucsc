@@ -775,6 +775,7 @@ async def bb_grade_attempt(course_id: str, column_id: str, attempt_id: str, scor
 # `_students` exist, and re-exported so tests and callers see one namespace.
 from .tools_more import *  # noqa: E402,F401,F403
 from .tools_exams import *  # noqa: E402,F401,F403
+from .tools_ultra import *  # noqa: E402,F401,F403
 
 
 def main() -> None:
