@@ -212,8 +212,12 @@ There is **no `/assessments` collection** in the public API. A test is a content
 item: `POST /contents` with `contentHandler.id = "resource/x-bb-asmt-test-link"`
 (Learn ≥ 3900.98); the response carries `assessmentId` and `gradeColumnId`.
 
-**Questions cannot be written on Ultra.** Verified on 4000.21.0 on
-22 October 2026: `POST …/questions` creates a `Presentation` block (title and
+**Questions cannot be written on Ultra.** Verified on 4001.2.0 on
+22 October 2026, and stated by the swagger (`https://devportal-docstore.s3.amazonaws.com/learn-swagger-<version>.json`,
+`<version>` from `/v1/system/version`): in `questionHandler.type` every type but
+`Presentation` is *Read Only*, and *Update Question* is "Update a Presentation
+Question". Of the 198 paths in the API, two touch questions; no pools, no
+import. In practice: `POST …/questions` creates a `Presentation` block (title and
 text, no answers, 0 points) and refuses every scored type with *"Creating
 non-presentation questions is not supported"* — whatever the payload. Reads are
 opaque too: list and single question return `id`, `position` and

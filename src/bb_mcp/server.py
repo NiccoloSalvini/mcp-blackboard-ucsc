@@ -467,7 +467,7 @@ async def bb_add_question(
 ) -> dict:
     """Add a question to an assessment. On Ultra, only a *Presentation* one.
 
-    Verified on 4000.21.0 (22 Oct 2026): `POST …/questions` accepts `title`,
+    Verified on 4001.2.0 (22 Oct 2026), and stated by the swagger: `POST …/questions` accepts `title`,
     `text`, `points` and `questionHandler.type`, and answers with
     "Creating non-presentation questions is not supported." to any type but
     Presentation — a text block with no answers and no points, useful for
