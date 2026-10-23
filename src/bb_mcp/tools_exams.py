@@ -56,7 +56,7 @@ async def bb_build_exam(
 
     `points` is per question and must be passed on purpose: this course's
     intermediates are 15 questions at 2 points in 60 minutes, the full exam 20
-    at 1.5 in 90. Points do not travel in the upload file: after the upload, set
+    at 2 in 60. Points do not travel in the upload file: after the upload, set
     them in Ultra or with bb_set_question_points (bb_test_fill sets them). The key is rendered with
     `quarto render <name>-key.qmd --to typst` outside any website project.
     """
