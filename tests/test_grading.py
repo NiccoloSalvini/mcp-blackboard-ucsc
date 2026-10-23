@@ -28,3 +28,15 @@ def test_function_only_and_blank():
 def test_scale_follows_points_possible():
     r = grading.assess("t.test(mpg ~ am, data = mtcars): 17.15 vs 24.39, p = 0.001", MODEL, 1.5)
     assert r["proposed"] == 1.125 and r["of"] == 1.5
+
+
+def test_ai_signals_catch_pasted_text_and_numbers_the_data_do_not_give():
+    pasted = "(a) Coefficient of disp: $9.38 \\times 10^{-10}$ ... depending on the threshold taught in your lectures. Approximately 26.5 and 68.4, 0.776, 7.55, 0.799"
+    sig = grading.ai_signals(pasted, MODEL, found=[], keys=grading.key_numbers(MODEL))
+    assert any("LaTeX" in x for x in sig) and any("your lectures" in x for x in sig) and any("match the data" in x for x in sig)
+
+
+def test_ai_signals_quiet_on_an_ordinary_answer():
+    a = "t.test(mpg ~ am, data = mtcars): 17.15 vs 24.39, CI 3.2 to 11.3, p = 0.001. Manual cars do about 7 mpg more."
+    r = grading.assess(a, MODEL, 1.5)
+    assert r["ai_signals"] == []

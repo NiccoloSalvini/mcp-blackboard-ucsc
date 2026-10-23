@@ -64,6 +64,33 @@ def sentence_words(text: str) -> int:
     return len([w for w in re.findall(r"[A-Za-z]{3,}", prose)])
 
 
+_AI_PATTERNS = [
+    (r"\$[^$\n]{1,40}\\%?\$|\\(?:times|frac|approx|text|beta|hat)\b", "LaTeX in a typed answer"),
+    (r"(?m)^\s*(?:#{1,4} |\*\*[^*]+\*\*:?|- \*\*)", "markdown headings or bold labels"),
+    (r"\b(?:taught in your (?:lectures?|course)|your (?:course|lecture|instructor)|as (?:you|your professor) (?:saw|mentioned))", "addresses the student as 'you' / 'your lectures'"),
+    (r"\b(?:in the standard [\w ]+ dataset|depending on (?:the )?(?:exact )?(?:dataset|version|threshold|preprocessing))", "hedges about the dataset or version"),
+    (r"\b(?:approximately|roughly) \$?\d", "approximate numbers where R prints exact ones"),
+    (r"\b(?:Let'?s|Here(?:'s| is) (?:the|a) (?:complete|step-by-step)|I hope this helps|In summary,|Key takeaways?)\b", "chat-assistant phrasing"),
+]
+
+
+def ai_signals(answer: str, model: str = "", found: list | None = None, keys: list | None = None) -> list[str]:
+    """Signs that an answer was pasted from an AI tool. Evidence for a person to weigh, never a verdict.
+
+    The strongest sign is not in the wording: numbers presented as R output
+    that the data do not give. That one is reported when the answer quotes
+    several numbers and almost none of the model's key numbers.
+    """
+    raw = html.unescape(answer or "")
+    out = [why for pat, why in _AI_PATTERNS if re.search(pat, raw, re.I)]
+    nums = numbers(plain(answer))
+    if keys and len(nums) >= 4 and found is not None and len(found) <= max(0, len(keys) // 4):
+        out.append(f"quotes {len(nums)} numbers but only {len(found)} of {len(keys)} match the data")
+    if len(plain(answer).split()) > 140 and not functions(plain(answer)):
+        out.append("long polished prose with no R code")
+    return out
+
+
 def assess(answer: str, model: str, points_possible: float) -> dict[str, Any]:
     """What the answer has, and a proposal on the question's scale (steps of a quarter)."""
     text = plain(answer)
@@ -89,6 +116,7 @@ def assess(answer: str, model: str, points_possible: float) -> dict[str, Any]:
         share, why = 0.0, "nothing usable"
     proposed = round(share * points_possible / step) * step
     return {"proposed": proposed, "of": points_possible, "why": why,
+            "ai_signals": ai_signals(answer, model, found, keys),
             "numbers_found": found, "numbers_missing": [k for k in keys if k not in found],
             "functions_used": fun_got, "functions_missing": [f for f in fun_model if f not in fun_got],
             "sentence_words": words, "answer_words": len(text.split())}

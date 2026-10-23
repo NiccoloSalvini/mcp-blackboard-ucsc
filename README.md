@@ -303,7 +303,11 @@ functions used, whether there is a sentence, and points on the question's
 scale with the reason. `bb_question_answers` does the same for one question
 across the class, which is how a question is marked consistently.
 `bb_grade_answers` writes the points and feedback; posting the attempt to
-the student stays with the column's Post in Ultra. The proposal is a reading
+the student stays with the column's Post in Ultra. Each proposal also carries
+`ai_signals`: LaTeX or markdown in a typed answer, sentences addressed to
+"your lectures", hedges about "the dataset version", and above all numbers
+presented as output that the data do not give. They are evidence for the
+marker, never a verdict. The proposal is a reading
 aid, not a mark: the open questions ask for a sentence, and the sentence is
 read by a person (or the session), then written.
 
