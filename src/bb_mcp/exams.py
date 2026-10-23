@@ -13,7 +13,8 @@ Pool file::
         "difficulty": "easy", "text": "...",
         "answers": [{"text": "...", "correct": true}, {"text": "...", "correct": false}]},
        {"id": "B1", "type": "TF", ..., "correct": false, "why": "one line for the key"},
-       {"id": "C1", "type": "ESS", ..., "example": "model answer", "partial": "how to split the points"}
+       {"id": "C1", "type": "ESS", ..., "example": "model answer", "partial": "how to split the points",
+        "marking": "notes for the marker only — never sent to Blackboard, where `example` is the model answer"}
      ]}
 
 `type` and the answer fields are exactly what bb_export_test takes (MC, MA,
@@ -175,6 +176,8 @@ def key_markdown(title: str, subtitle: str, note: str, questions: list[dict], po
             out.append(f"**Key:** {'True' if q.get('correct') else 'False'}. {q.get('why', '')}\n")
         elif kind == "ESS":
             out.append(f"**Key:** {q.get('example', '')}\n")
+            if q.get("marking"):
+                out.append(f"*Marking:* {q['marking']}\n")
             if q.get("partial"):
                 out.append(f"*Partial credit:* {q['partial']}\n")
         elif kind == "NUM":
