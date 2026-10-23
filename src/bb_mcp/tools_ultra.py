@@ -152,20 +152,26 @@ async def bb_test_fill(course_id: str, test_id: str, manifest_path: str, points:
 
 @mcp.tool()
 async def bb_banks_from_pool(course_id: str, pool_path: str, by: str = "topic", prefix: str = "",
-                             points: float = 1.0, only: list[str] | None = None) -> dict:
-    """One question bank per topic (or per any field `by`) from a pool file, questions tagged.
+                             points: float = 1.0, only: list[str] | None = None,
+                             exclude_manifests: list[str] | None = None) -> dict:
+    """One question bank per topic (or per any field `by`) from a pool file.
 
     Bank title = `prefix` + the field's value, e.g. "M1 · hypothesis testing".
-    `only` restricts to those values. A bank whose title already exists in the
-    course is skipped, so the call can be repeated after a failure.
+    `only` restricts to those values; `exclude_manifests` (paths of
+    `bb_build_exam` manifests, e.g. the mock's) keeps out every question that
+    has already been sat. A bank whose title already exists in the course is
+    skipped, so the call can be repeated after a failure.
     """
     _writes()
     pool = exams.load_pool(pool_path)
+    seen = exams.ids_of_manifests(exclude_manifests or [])
     existing = {b["title"] for b in await ultra.list_banks(course_id)}
     groups: dict[str, list[dict]] = {}
     for q in pool["questions"]:
         key = str(q.get(by) or "untagged")
         if only and key not in only:
+            continue
+        if str(q.get("id")) in seen:
             continue
         groups.setdefault(key, []).append(q)
     out = []
@@ -183,4 +189,4 @@ async def bb_banks_from_pool(course_id: str, pool_path: str, by: str = "topic", 
             except BlackboardError as e:
                 failed.append({"id": q.get("id"), "error": str(e)[:200]})
         out.append({"bank": title, "id": bank["id"], "added": done, "failed": failed})
-    return {"pool": pool["name"], "banks": out}
+    return {"pool": pool["name"], "excluded": len(seen), "banks": out}
