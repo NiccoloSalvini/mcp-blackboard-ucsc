@@ -289,6 +289,24 @@ so pools are still added in the interface. Undocumented API:
 it can change with any Learn release; the public API keeps doing everything
 else, and `bb_add_question`'s refusal still stands for it.
 
+**Marking a test** (`bb_test_answers`, `bb_question_answers`, `bb_grade_answers`,
+on Ultra's private API; `bb_mcp.grading` for the proposals). The public API
+never shows a student's answers; the interface reads them from
+`…/gradebook/attempts/{a}/assessment/answers` and the points per question from
+`…/answers/grades`, and marks an open answer with
+`PATCH …/answers/{questionAttempt}/grades {"manualPoints": p, "manualFeedback": …}`
+(the field is `manualPoints`, found in the front-end bundle: `points` is
+accepted and ignored). `bb_test_answers` lists every submission with the
+closed questions' points and each open answer next to its model answer, the
+pool's marking notes and a *proposal*: the key numbers found and missed, the
+functions used, whether there is a sentence, and points on the question's
+scale with the reason. `bb_question_answers` does the same for one question
+across the class, which is how a question is marked consistently.
+`bb_grade_answers` writes the points and feedback; posting the attempt to
+the student stays with the column's Post in Ultra. The proposal is a reading
+aid, not a mark: the open questions ask for a sentence, and the sentence is
+read by a person (or the session), then written.
+
 **The API's own swagger** is in `docs/learn-swagger-<version>.json`
 (`scripts/fetch_swagger.py` refreshes it for the server's version) and
 `bb_api_doc("Create Question")` searches it: paths, summaries, descriptions,

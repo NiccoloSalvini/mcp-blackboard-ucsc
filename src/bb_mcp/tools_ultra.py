@@ -10,9 +10,9 @@ from __future__ import annotations
 from collections import Counter
 
 from . import client as bb
-from . import exams, ultra
+from . import exams, grading, ultra
 from .client import BlackboardError
-from .server import mcp
+from .server import mcp, _students
 
 
 def _writes():
@@ -190,3 +190,87 @@ async def bb_banks_from_pool(course_id: str, pool_path: str, by: str = "topic", 
                 failed.append({"id": q.get("id"), "error": str(e)[:200]})
         out.append({"bank": title, "id": bank["id"], "added": done, "failed": failed})
     return {"pool": pool["name"], "excluded": len(seen), "banks": out}
+
+
+# ----------------------------------------------------------------------------- marking a test
+def _pool_index(pool_path: str | None) -> dict[str, dict]:
+    if not pool_path:
+        return {}
+    pool = exams.load_pool(pool_path)
+    return {grading.plain(q["text"]): q for q in pool["questions"]}
+
+
+@mcp.tool()
+async def bb_test_answers(course_id: str, column_id: str, only_open: bool = True, pool_path: str | None = None,
+                          attempt_ids: list[str] | None = None) -> dict:
+    """Every submission of a test with what each student answered, question by question.
+
+    Closed questions carry Blackboard's own points; open ones carry the
+    student's text, the model answer, the points so far and, with `pool_path`,
+    the pool's marking notes and a *proposal* from bb_mcp.grading (numbers
+    found, functions used, sentence or not). `only_open` leaves the closed
+    questions out and reports their total instead. Read-only.
+    """
+    students = {s["userId"]: s for s in await _students(course_id)}
+    attempts = await bb._paged(f"/v2/courses/{course_id}/gradebook/columns/{column_id}/attempts")
+    if attempt_ids:
+        attempts = [a for a in attempts if a.get("id") in set(attempt_ids)]
+    pool = _pool_index(pool_path)
+    out = []
+    for a in attempts:
+        rows = await ultra.attempt_answers(course_id, a["id"])
+        closed = [r for r in rows if r["type"] != "essay"]
+        opens = [r for r in rows if r["type"] == "essay"]
+        for r in opens:
+            src = pool.get(grading.plain(r["question"]))
+            if src:
+                r["pool_id"] = src.get("id")
+                r["marking"] = src.get("marking") or src.get("partial")
+            if r["model_answer"]:
+                r["proposal"] = grading.assess(r["answer"], r["model_answer"], float(r["points_possible"] or 0))
+        s = students.get(a.get("userId"), {})
+        out.append({"attempt_id": a["id"], "user_id": a.get("userId"), "name": s.get("name"), "status": a.get("status"),
+                    "closed_points": sum((r["points"] or 0) for r in closed), "closed_correct": sum(1 for r in closed if r["correct"]),
+                    "closed_total": len(closed), "open_points": sum((r["points"] or 0) for r in opens if r["points"] is not None),
+                    "open_unmarked": sum(1 for r in opens if r["points"] is None),
+                    "questions": opens if only_open else rows})
+    return {"column": column_id, "attempts": len(out), "rows": out}
+
+
+@mcp.tool()
+async def bb_grade_answers(course_id: str, grades: list[dict]) -> dict:
+    """Write marks on open answers: [{"attempt_id", "question_attempt_id", "points", "feedback"?}, …].
+
+    `points` None clears a mark. Nothing is posted to the student here: when
+    every open answer of an attempt has its points, post the attempt (the
+    column's "Post" in Ultra, or bb_post_attempt). Returns each write as
+    Blackboard now holds it, and the failures with their reason.
+    """
+    _writes()
+    done, failed = [], []
+    for g in grades:
+        try:
+            r = await ultra.grade_answer(course_id, g["attempt_id"], g["question_attempt_id"], g.get("points"), g.get("feedback", ""))
+            done.append({"attempt_id": g["attempt_id"], **r})
+        except (BlackboardError, KeyError) as e:
+            failed.append({**g, "error": str(e)[:200]})
+    return {"written": len(done), "failed": failed, "grades": done}
+
+
+@mcp.tool()
+async def bb_question_answers(course_id: str, assessment_id: str, question_id: str, pool_path: str | None = None) -> dict:
+    """One question, every student's answer: the way to mark an open question across the class in one pass.
+
+    With `pool_path` the model answer, the marking notes and a proposal per answer come along.
+    """
+    rows = await ultra.question_answers(course_id, assessment_id, question_id)
+    students = {s["userId"]: s for s in await _students(course_id)}
+    pool = _pool_index(pool_path)
+    model = next((r["model_answer"] for r in rows if r.get("model_answer")), None)
+    src = pool.get(grading.plain(rows[0]["question"])) if rows else None
+    for r in rows:
+        r["name"] = students.get(r.get("user_id"), {}).get("name")
+        if r["type"] == "essay" and model:
+            r["proposal"] = grading.assess(r["answer"], model, float(r["points_possible"] or 0))
+    return {"question_id": question_id, "question": rows[0]["question"] if rows else None, "model_answer": model,
+            "marking": (src or {}).get("marking") or (src or {}).get("partial"), "answers": rows}

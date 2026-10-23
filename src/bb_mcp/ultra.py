@@ -13,6 +13,13 @@ recording the interface with Chrome DevTools:
     DELETE …/assessments/{a}/questions/{q}                 one question — also a question pool
                                                            (`questionBlock`) or an essay the public
                                                            API refuses ("Invalid Question Type")
+    GET  /learn/api/v1/courses/{c}/gradebook/attempts/{a}                      one attempt (status, score)
+    GET  …/gradebook/attempts/{a}/assessment/answers             the student's answers, one row per question
+    GET  …/gradebook/attempts/{a}/assessment/answers/grades      the points per question (auto for the closed ones)
+    PATCH …/gradebook/attempts/{a}/assessment/answers/{qa}/grades {"manualPoints": p, "manualFeedback": {"rawText": …}}
+                                                                 marks one open answer (the field is manualPoints:
+                                                                 "points" is accepted and ignored; read from the bundle)
+    GET  …/gradebook/attempts/assessments/{test}/questions/{q}/answers   every student's answer to one question
     POST /learn/api/v1/files  +  POST …/courses/{c}/imports?fileLocation=…   import a package
     POST /learn/api/v1/courses/{c}/exports                 export a bank
 
@@ -174,3 +181,70 @@ async def list_questions(course_id: str, assessment_id: str) -> list[dict[str, A
 async def delete_question(course_id: str, assessment_id: str, question_id: str) -> dict[str, Any]:
     await _call("DELETE", f"/courses/{course_id}/assessments/{assessment_id}/questions/{question_id}")
     return {"deleted": question_id}
+
+
+# ----------------------------------------------------------------------------- attempts and marking
+def _strip(s: str | None) -> str:
+    import html as _html
+    import re as _re
+    return _re.sub(r"\s+", " ", _html.unescape(_re.sub(r"<[^>]+>", " ", s or ""))).strip()
+
+
+def answer_summary(row: dict[str, Any], grade: dict[str, Any] | None = None) -> dict[str, Any]:
+    """One question of one attempt, as a marker needs it: the question, what was answered, the points."""
+    q = row.get("question") or {}
+    kind = q.get("questionType")
+    given = row.get("givenAnswer")
+    if kind == "essay":
+        answer: Any = _strip((given or {}).get("rawText") if isinstance(given, dict) else given)
+    elif kind == "multipleanswer" and isinstance(given, list):
+        opts = [_strip((a.get("answerText") or {}).get("rawText")) for a in q.get("answers") or []]
+        answer = [o for o, g in zip(opts, given) if g]
+    else:
+        answer = given
+    g = grade or {}
+    return {"question_attempt_id": row.get("id"), "question_id": row.get("questionId"),
+            "number": (g.get("questionAttempt") or {}).get("visibleQuestionNumber"), "type": kind,
+            "question": _strip((q.get("questionText") or {}).get("rawText")),
+            "answer": answer, "correct": row.get("correct"),
+            "points": g.get("points"), "points_possible": q.get("points"),
+            "feedback": _strip((g.get("manualFeedback") or {}).get("rawText")),
+            "model_answer": _strip((q.get("answerText") or {}).get("rawText")) if kind == "essay" else None}
+
+
+async def attempt_info(course_id: str, attempt_id: str) -> dict[str, Any]:
+    a = await _call("GET", f"/courses/{course_id}/gradebook/attempts/{attempt_id}")
+    return {"attempt_id": attempt_id, "user_id": a.get("userId"), "status": a.get("status"), "score": a.get("score"),
+            "ready_to_post": a.get("readyToPost"), "submitted": a.get("attemptDate")}
+
+
+async def attempt_answers(course_id: str, attempt_id: str) -> list[dict[str, Any]]:
+    """Every question of one attempt with the answer given and the points it has."""
+    base = f"/courses/{course_id}/gradebook/attempts/{attempt_id}/assessment/answers"
+    rows = (await _call("GET", base, params={"limit": 100, "offset": 0})).get("results", [])
+    grades = (await _call("GET", base + "/grades", params={"limit": 100, "offset": 0})).get("results", [])
+    by_q = {(g.get("questionAttempt") or {}).get("questionId"): g for g in grades}
+    out = [answer_summary(r, by_q.get(r.get("questionId"))) for r in rows]
+    out.sort(key=lambda x: (x["number"] is None, x["number"] or 0))
+    return out
+
+
+async def grade_answer(course_id: str, attempt_id: str, question_attempt_id: str, points: float | None,
+                       feedback: str = "") -> dict[str, Any]:
+    """Mark one open answer: points (None clears) and feedback the student sees."""
+    body = {"manualPoints": points, "manualFeedback": {"rawText": f"<p>{feedback}</p>" if feedback else ""}}
+    r = await _call("PATCH", f"/courses/{course_id}/gradebook/attempts/{attempt_id}/assessment/answers/{question_attempt_id}/grades", json=body)
+    return {"question_attempt_id": question_attempt_id, "points": r.get("points"), "feedback": _strip((r.get("manualFeedback") or {}).get("rawText"))}
+
+
+async def question_answers(course_id: str, assessment_id: str, question_id: str) -> list[dict[str, Any]]:
+    """Every student's answer to one question of a test, with the points so far."""
+    r = await _call("GET", f"/courses/{course_id}/gradebook/attempts/assessments/{assessment_id}/questions/{question_id}/answers",
+                    params={"limit": 200, "offset": 0})
+    out = []
+    for g in r.get("results", []):
+        qa = g.get("questionAttempt") or {}
+        row = answer_summary({**qa, "id": qa.get("id"), "questionId": qa.get("questionId"), "givenAnswer": qa.get("givenAnswer")}, g)
+        row.update(user_id=g.get("userId"), attempt_id=qa.get("attemptId"))
+        out.append(row)
+    return out
