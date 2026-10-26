@@ -192,6 +192,50 @@ async def bb_banks_from_pool(course_id: str, pool_path: str, by: str = "topic", 
     return {"pool": pool["name"], "excluded": len(seen), "banks": out}
 
 
+@mcp.tool()
+async def bb_test_pools(course_id: str, test_id: str, pool_path: str, groups: list[dict], points: float,
+                        exclude_manifests: list[str] | None = None, bank_prefix: str = "",
+                        replace: bool = False) -> dict:
+    """Question pools in a test, so every student gets a different paper of the same shape.
+
+    `groups` is the shape, in paper order: [{"type": "MC", "difficulty": "easy",
+    "choose": 4}, …]. Each group becomes one pool drawing `choose` questions at
+    random from the questions of that type and difficulty, across every bank
+    whose title starts with `bank_prefix`. Bank questions are matched to the pool
+    file by their text; questions of `exclude_manifests` (the mock, the practice
+    paper) are left out of every pool. `points` is per question. `replace`
+    empties the test first.
+    """
+    _writes()
+    pool = exams.load_pool(pool_path)
+    seen = exams.ids_of_manifests(exclude_manifests or [])
+    by_text = {grading.plain(q["text"]): q for q in pool["questions"]}
+    banks = [b for b in await ultra.list_banks(course_id) if (b.get("title") or "").startswith(bank_prefix)]
+    found: list[tuple[str, str, dict]] = []
+    for b in banks:
+        for bq in await ultra.list_questions(course_id, b["id"]):
+            src = by_text.get(grading.plain(bq["text"]))
+            if src and str(src.get("id")) not in seen:
+                found.append((b["id"], bq["id"], src))
+    if replace:
+        await bb_assessment_clear(course_id, test_id)
+    after, out = "start", []
+    for g in groups:
+        kind, level, k = str(g["type"]).upper(), g.get("difficulty"), int(g["choose"])
+        hits = [(bank, qid) for bank, qid, src in found
+                if str(src.get("type", "")).upper() == kind and (level is None or src.get("difficulty") == level)]
+        if len(hits) < k:
+            out.append({**g, "available": len(hits), "error": "fewer questions than the draw"})
+            continue
+        block = await ultra.add_question_block(course_id, test_id, [q for _, q in hits], sorted({b for b, _ in hits}),
+                                               k, points, after)
+        after = block["id"]
+        out.append({**g, **block})
+    return {"test": test_id, "matched": len(found), "pools": out,
+            "questions_per_student": sum(p.get("choose") or 0 for p in out if "error" not in p),
+            "points_total": sum((p.get("choose") or 0) * points for p in out if "error" not in p)}
+
+
 # ----------------------------------------------------------------------------- marking a test
 def _pool_index(pool_path: str | None) -> dict[str, dict]:
     if not pool_path:

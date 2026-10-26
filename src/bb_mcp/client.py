@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from mcp.server.mcpserver.exceptions import ToolError
 
 
 def _load_dotenv() -> None:
@@ -40,8 +41,10 @@ ALLOW_GRADE_WRITES = os.environ.get("BB_ALLOW_GRADE_WRITES", "0") == "1"
 API = f"{BASE_URL}/learn/api/public"
 
 
-class BlackboardError(RuntimeError):
-    pass
+class BlackboardError(ToolError):
+    """A failure the caller should read: the SDK passes a ToolError's text on and
+    reduces any other exception to "Error executing tool <name>", which hid a
+    401 from an expired Ultra session (26 October 2026)."""
 
 
 # --------------------------------------------------------------------------
