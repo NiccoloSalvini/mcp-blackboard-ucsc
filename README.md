@@ -284,8 +284,12 @@ correct flags, points) to check it against the pool file, and
 `bb_assessment_clear` deletes questions, including the question pools and
 essays the public API refuses ("Invalid Question Type for update or delete").
 A *question pool* in a test (Ultra's random block, k questions from a bank)
-reads back as `questionBlock`; the request that creates one was not captured,
-so pools are still added in the interface. Undocumented API:
+is a question of type `questionBlock`: `bb_test_pools` builds a test as a list
+of them, one per group of the paper's shape (e.g. multiple choice, easy, draw
+4), each drawing from the banks' questions of that type and difficulty, so
+every student gets a different paper of the same shape. The request was read
+from the interface's bundle and tried on a hidden test (26 October 2026); see
+`ultra.py`. Undocumented API:
 it can change with any Learn release; the public API keeps doing everything
 else, and `bb_add_question`'s refusal still stands for it.
 

@@ -25,10 +25,17 @@ recording the interface with Chrome DevTools:
 
 A test is an assessment too (`"type": "Test"`), so the same question route
 fills a test directly — no bank, no pool — which is how a fixed paper such
-as a mock is deployed. A question pool reads back as
-`{"questionType": "questionBlock", "pointsPerQuestion", "numOfQuestionsToChoose",
-"numOfAvailableQuestions"}`; the request that creates one (which bank, which
-questions) was never captured, so pools are still made in the interface.
+as a mock is deployed. A question pool is a question too, of type
+`questionBlock` (read from the interface's bundle, 26 October 2026, and
+tried on a hidden test):
+
+    POST  …/assessments/{test}/questions   {"questionType": "questionBlock", "positionAfter": …,
+                                            "questionSelectionDetails": {"questionIds": [bank question ids],
+                                            "selectAll": false, "searchCriteria": {"assessmentIds": [banks], …}}}
+    PATCH …/assessments/{test}/questions/{block}   {"numOfQuestionsToChoose": k, "pointsPerQuestion": p}
+    GET   …/assessments/{test}/questions/{block}/questions   the questions it draws from
+    POST  …/assessments/{a}/questions/copy  {"questionSelectionDetails": {…}, "positionAfter": …,
+                                            "usePointsFromSource": true}   copy questions, no draw
 
 Undocumented: it can change with any Learn release, and it needs a signed-in
 browser. The session comes from a Chrome started with
@@ -158,6 +165,34 @@ async def add_question(course_id: str, bank_id: str, q: dict[str, Any], points: 
 async def delete_bank(course_id: str, bank_id: str) -> dict[str, Any]:
     await _call("DELETE", f"/courses/{course_id}/assessments/{bank_id}")
     return {"deleted": bank_id}
+
+
+async def add_question_block(course_id: str, test_id: str, question_ids: list[str], bank_ids: list[str],
+                             choose: int, points: float, position_after: str = "start") -> dict[str, Any]:
+    """A question pool in a test: `choose` of `question_ids` (questions of `bank_ids`) at random, `points` each.
+
+    Ultra creates it with every question chosen and 1 point, as the interface
+    does, and the draw and the points are set right after.
+    """
+    tags = {"categoryTags": [], "keywordTags": [], "levelOfDifficultyTags": [], "topicTags": []}
+    criteria = {"assessmentIds": bank_ids, "assessmentTypes": ["Test", "Pool"], "excludeSubtypes": ["KnowledgeCheck"],
+                "excludeAssessmentIds": [test_id], "questionTypes": ["eitherOr", "essay", "multipleanswer"]}
+    r = await _call("POST", f"/courses/{course_id}/assessments/{test_id}/questions", json={
+        "courseId": course_id, "assessmentId": test_id, "questionType": "questionBlock", "positionAfter": position_after,
+        "numOfAvailableQuestions": len(question_ids), "numOfQuestionsToChoose": len(question_ids), "pointsPerQuestion": 1,
+        "questionSelectionDetails": {"questionIds": question_ids, "selectAll": False, "searchCriteria": criteria}})
+    p = await _call("PATCH", f"/courses/{course_id}/assessments/{test_id}/questions/{r['id']}", json={
+        "id": r["id"], "questionType": "questionBlock", "numOfQuestionsToChoose": int(choose),
+        "pointsPerQuestion": float(points), **tags})
+    return {"id": r["id"], "available": p.get("numOfAvailableQuestions"), "choose": p.get("numOfQuestionsToChoose"),
+            "points": p.get("pointsPerQuestion")}
+
+
+async def block_questions(course_id: str, test_id: str, block_id: str) -> list[dict[str, Any]]:
+    """The questions a question pool draws from."""
+    r = await _call("GET", f"/courses/{course_id}/assessments/{test_id}/questions/{block_id}/questions",
+                    params={"limit": 200, "offset": 0})
+    return [question_summary(q) for q in r.get("results", [])]
 
 
 def question_summary(q: dict[str, Any]) -> dict[str, Any]:
