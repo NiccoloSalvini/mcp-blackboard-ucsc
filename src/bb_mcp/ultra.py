@@ -23,6 +23,20 @@ recording the interface with Chrome DevTools:
     POST /learn/api/v1/files  +  POST …/courses/{c}/imports?fileLocation=…   import a package
     POST /learn/api/v1/courses/{c}/exports                 export a bank
 
+A test's settings, which the public API does not expose (read from the
+interface's bundle and tried on a hidden test, 2 November 2026):
+
+    GET   /learn/api/v1/courses/{c}/contents/{content}    contentDetail["resource/x-bb-asmt-test-link"].test:
+                                                          deploymentSettings (attemptCount, timeLimit,
+                                                          feedbackSettings) and gradingColumn
+    PATCH /learn/api/v1/courses/{c}/contents/{content}    {"contentDetail": {handler: {"test": {
+                                                          "deployedAssessmentType": "test",  ← required
+                                                          "deploymentSettings": {"id": …, "feedbackSettings": …},
+                                                          "gradingColumn": {"autoPostGrades": …}}}}}
+    PATCH /learn/api/v1/courses/{c}/gradebook/columns/{col}   {"multipleAttempts": n}, 0 = unlimited
+                                                          (attemptCount then reads −1); the same field on
+                                                          the content route is ignored
+
 A test is an assessment too (`"type": "Test"`), so the same question route
 fills a test directly — no bank, no pool — which is how a fixed paper such
 as a mock is deployed. A question pool is a question too, of type
@@ -131,13 +145,14 @@ def question_json(course_id: str, assessment_id: str, q: dict[str, Any], points:
                 "isAutoGraded": True}
     if kind in ("MC", "MA"):
         # As the interface posts them (recorded 22 Oct 2026): lowercase type, answers with a
-        # client-side id, `correctAnswer`, and the counts Ultra shows in the editor.
+        # client-side id, `correctAnswer`, and the counts Ultra shows in the editor. No
+        # `positionAfter`: the recording had "start", which put every MC first and so filled a
+        # test in reverse (2 Nov 2026); without it a question is appended, as a TF always was.
         answers = q.get("answers") or []
         n_correct = sum(1 for a in answers if a.get("correct"))
         # Ultra has one type for both: "multipleanswer" with singleCorrectAnswer true for a multiple
         # choice. "multipleChoice" exists but answers "Read only question type" (Original's).
         return {**base, "questionType": "multipleanswer",
-                "positionAfter": "start",
                 "answers": [{"id": f"new_{uuid.uuid4()}", "answerText": {"rawText": f"<p>{a.get('text', '')}</p>"},
                              "correctAnswer": bool(a.get("correct"))} for a in answers],
                 "answersCount": len(answers), "singleCorrectAnswer": kind == "MC",
@@ -283,3 +298,58 @@ async def question_answers(course_id: str, assessment_id: str, question_id: str)
         row.update(user_id=g.get("userId"), attempt_id=qa.get("attemptId"))
         out.append(row)
     return out
+
+
+# ----------------------------------------------------------------------------- test settings
+TEST_HANDLER = "resource/x-bb-asmt-test-link"
+# feedbackSettings keys, as the bundle names them; a key holds the options shown from that moment
+FEEDBACK_MODES = {"as": "after submission", "ashr": "after submission, results hidden", "aag": "after the attempt is graded",
+                  "aiag": "after the grade is posted", "add": "after the due date", "aaed": "after availability ends",
+                  "osd": "on a set date", "ns": "not specified"}
+FEEDBACK_OPTIONS = ("SCORE", "USER_ANSWERS", "CORRECT_ANSWERS", "INCORRECT_ANSWERS", "ALL_ANSWERS", "INSTRUCTOR_FEEDBACK")
+
+
+async def test_settings(course_id: str, content_id: str) -> dict[str, Any]:
+    """The settings a test link carries: attempts, time limit, what students see and when, posting."""
+    c = await _call("GET", f"/courses/{course_id}/contents/{content_id}")
+    t = ((c.get("contentDetail") or {}).get(TEST_HANDLER) or {}).get("test")
+    if not t:
+        raise BlackboardError(f"{content_id} is not a test link")
+    ds, gc = t.get("deploymentSettings") or {}, t.get("gradingColumn") or {}
+    attempts = gc.get("multipleAttempts")
+    return {"content": content_id, "column": gc.get("id"), "deployment": ds.get("id"),
+            "attempts": "unlimited" if attempts == 0 else attempts, "time_limit": ds.get("timeLimit"),
+            "feedback": {FEEDBACK_MODES.get(k, k): (v or {}).get("options", []) for k, v in (ds.get("feedbackSettings") or {}).items()},
+            "auto_post_grades": gc.get("autoPostGrades"), "available": c.get("isAvailable"),
+            "partially_visible": c.get("isPartiallyVisible")}
+
+
+def settings_body(deployment_id: str, feedback: dict[str, list[str]] | None, auto_post: bool | None) -> dict[str, Any]:
+    """The PATCH body for a test link's settings; only what is given is sent."""
+    test: dict[str, Any] = {"deployedAssessmentType": "test"}
+    if feedback is not None:
+        for mode, options in feedback.items():
+            if mode not in FEEDBACK_MODES:
+                raise BlackboardError(f"feedback mode {mode!r}: one of {sorted(FEEDBACK_MODES)}")
+            bad = [o for o in options if o not in FEEDBACK_OPTIONS]
+            if bad:
+                raise BlackboardError(f"feedback options {bad}: choose from {list(FEEDBACK_OPTIONS)}")
+        test["deploymentSettings"] = {"id": deployment_id,
+                                      "feedbackSettings": {m: {"options": list(o)} for m, o in feedback.items()}}
+    if auto_post is not None:
+        test["gradingColumn"] = {"autoPostGrades": bool(auto_post)}
+    return {"contentDetail": {TEST_HANDLER: {"test": test}}}
+
+
+async def set_test_settings(course_id: str, content_id: str, attempts: int | None = None,
+                            feedback: dict[str, list[str]] | None = None, auto_post: bool | None = None) -> dict[str, Any]:
+    """Write what is given, then return the settings as Ultra now holds them."""
+    now = await test_settings(course_id, content_id)
+    if feedback is not None or auto_post is not None:
+        await _call("PATCH", f"/courses/{course_id}/contents/{content_id}",
+                    json=settings_body(now["deployment"], feedback, auto_post))
+    if attempts is not None:
+        if attempts < 0:
+            raise BlackboardError("attempts: 0 for unlimited, or a positive number")
+        await _call("PATCH", f"/courses/{course_id}/gradebook/columns/{now['column']}", json={"multipleAttempts": int(attempts)})
+    return await test_settings(course_id, content_id)

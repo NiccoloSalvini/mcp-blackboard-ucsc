@@ -31,6 +31,29 @@ async def bb_ultra_connect(cdp_endpoint: str = "http://127.0.0.1:9223") -> dict:
 
 
 @mcp.tool()
+async def bb_test_settings(course_id: str, content_id: str, attempts: int | None = None,
+                           show_after_submission: list[str] | None = None,
+                           auto_post_grades: bool | None = None) -> dict:
+    """Read a test's settings, and change attempts, results release and grade posting.
+
+    `content_id` is the test link's content id (bb_list_assessments). With no
+    other argument it only reads. `attempts`: 0 for unlimited, or a number.
+    `show_after_submission`: what students see as soon as they submit, from
+    SCORE, USER_ANSWERS, CORRECT_ANSWERS, INCORRECT_ANSWERS, ALL_ANSWERS,
+    INSTRUCTOR_FEEDBACK; it replaces every later release ("after the attempt
+    is graded" and the rest), so a practice test shows everything at once.
+    `auto_post_grades`: post grades automatically. The time limit is read, not
+    written (its shape is not recorded); a test without one shows `None`.
+    Visibility stays with bb_set_availability and bb_release_by_date.
+    """
+    if attempts is None and show_after_submission is None and auto_post_grades is None:
+        return await ultra.test_settings(course_id, content_id)
+    _writes()
+    feedback = None if show_after_submission is None else {"as": [o.upper() for o in show_after_submission]}
+    return await ultra.set_test_settings(course_id, content_id, attempts, feedback, auto_post_grades)
+
+
+@mcp.tool()
 async def bb_banks_list(course_id: str) -> list[dict]:
     """The course's question banks (Ultra: assessments of type Pool), with question counts."""
     return await ultra.list_banks(course_id)
