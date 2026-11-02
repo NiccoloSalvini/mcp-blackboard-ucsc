@@ -240,8 +240,9 @@ One question per line, no header, **at most 250 per file**, MC with exactly one
 correct answer, tabs and newlines scrubbed. **Points do not travel in the file**:
 every question arrives at 0; `bb_set_question_points(course, assessment, 1.5)`
 sets them all in one call (`PATCH …/questions/{id}` does take `points`). Time
-limit, attempts and results release are set in the same screen — the API does
-not expose them either. A release date does go through the API:
+limit, attempts and results release are not in the public API; `bb_test_settings`
+writes attempts, results release and grade posting through Ultra's private API
+(below), and reads the time limit. A release date does go through the API:
 `bb_release_by_date` on the test's content id makes it `PartiallyVisible`
 until the start, which is Ultra's "show on" date.
 
@@ -263,7 +264,8 @@ of a draw fixes a paper by hand. Points are not in the file:
 
 **Question banks and tests, on Ultra's private API** (`bb_ultra_connect`,
 `bb_banks_list`, `bb_bank_create`, `bb_bank_add_questions`, `bb_banks_from_pool`,
-`bb_bank_delete`, `bb_assessment_questions`, `bb_assessment_clear`, `bb_test_fill`).
+`bb_bank_delete`, `bb_assessment_questions`, `bb_assessment_clear`, `bb_test_fill`,
+`bb_test_settings`).
 What the public API refuses, the Ultra interface does through `/learn/api/v1/…`
 as the signed-in user — observed by recording the interface on 4001.2.0,
 22 October 2026: `POST /courses/{c}/assessments {"title", "type": "Pool"}` makes
@@ -283,6 +285,16 @@ first; `bb_assessment_questions` reads any bank or test back (text, answers,
 correct flags, points) to check it against the pool file, and
 `bb_assessment_clear` deletes questions, including the question pools and
 essays the public API refuses ("Invalid Question Type for update or delete").
+Until 2 November 2026 a multiple choice was posted with `positionAfter: "start"`,
+as the recording had it, so each one landed first and a manifest went in
+reversed; it is now posted without, and lands last like every other type.
+`bb_test_settings` reads a test link's settings and writes three of them
+(read from the bundle, tried on a hidden test, 2 November 2026): attempts on
+the gradebook column (`multipleAttempts`, 0 = unlimited), and on the content
+item what students see after submitting (`feedbackSettings`, one key per
+moment: `as` after submission, `aag` after the attempt is graded, …) and
+whether grades post automatically. The content PATCH needs
+`"deployedAssessmentType": "test"` inside `test`, or Jackson refuses it.
 A *question pool* in a test (Ultra's random block, k questions from a bank)
 is a question of type `questionBlock`: `bb_test_pools` builds a test as a list
 of them, one per group of the paper's shape (e.g. multiple choice, easy, draw

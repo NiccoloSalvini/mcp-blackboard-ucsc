@@ -24,6 +24,7 @@ def test_multiple_choice_json_marks_the_correct_answer():
     assert [a["correctAnswer"] for a in j["answers"]] == [True, False]
     assert j["answers"][0]["answerText"]["rawText"] == "<p>yes</p>" and j["answers"][0]["id"].startswith("new_")
     assert j["answersCount"] == 2 and j["answerSelectionLimit"] == 1
+    assert "positionAfter" not in j     # "start" put every MC first: a test filled in reverse
 
 
 def test_multiple_answer_json_counts_the_correct_ones():
@@ -52,3 +53,19 @@ def test_question_summary_reads_a_pool_and_an_mc():
           "questionText": {"rawText": "Q?"}, "answers": [{"id": "x", "answerText": {"rawText": "<p>a</p>"}, "correctAnswer": True}]}
     s = ultra.question_summary(mc)
     assert s["text"] == "Q?" and s["answers"] == [{"text": "<p>a</p>", "correct": True}] and s["pool"] is None
+
+
+def test_settings_body_sends_only_what_is_given():
+    b = ultra.settings_body("_9_1", {"as": ["SCORE", "CORRECT_ANSWERS"]}, None)
+    t = b["contentDetail"]["resource/x-bb-asmt-test-link"]["test"]
+    assert t["deployedAssessmentType"] == "test" and "gradingColumn" not in t
+    assert t["deploymentSettings"] == {"id": "_9_1", "feedbackSettings": {"as": {"options": ["SCORE", "CORRECT_ANSWERS"]}}}
+    t = ultra.settings_body("_9_1", None, True)["contentDetail"]["resource/x-bb-asmt-test-link"]["test"]
+    assert t["gradingColumn"] == {"autoPostGrades": True} and "deploymentSettings" not in t
+
+
+def test_settings_body_refuses_unknown_options():
+    with pytest.raises(BlackboardError):
+        ultra.settings_body("_9_1", {"as": ["EVERYTHING"]}, None)
+    with pytest.raises(BlackboardError):
+        ultra.settings_body("_9_1", {"soon": ["SCORE"]}, None)
