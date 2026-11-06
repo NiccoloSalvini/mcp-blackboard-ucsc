@@ -69,3 +69,15 @@ def test_settings_body_refuses_unknown_options():
         ultra.settings_body("_9_1", {"as": ["EVERYTHING"]}, None)
     with pytest.raises(BlackboardError):
         ultra.settings_body("_9_1", {"soon": ["SCORE"]}, None)
+
+
+def test_feedback_is_off_unless_asked():
+    q = {"id": "A3", "type": "MC", "text": "M?", "why": "because a < b & c",
+         "answers": [{"text": "yes", "correct": True}, {"text": "no", "correct": False}]}
+    j = ultra.question_json("_1_1", "_2_1", q, 1.0)
+    assert j["correctResponseFeedback"] == {"rawText": ""} and j["incorrectResponseFeedback"] == {"rawText": ""}
+    j = ultra.question_json("_1_1", "_2_1", q, 1.0, feedback=True)
+    assert j["correctResponseFeedback"]["rawText"] == "<p>because a &lt; b &amp; c</p>"
+    assert j["incorrectResponseFeedback"] == j["correctResponseFeedback"]
+    tf = ultra.question_json("_1_1", "_2_1", {"id": "B2", "type": "TF", "text": "T?", "correct": True}, 1.0, feedback=True)
+    assert tf["correctResponseFeedback"] == {"rawText": ""}     # no `why`, nothing sent

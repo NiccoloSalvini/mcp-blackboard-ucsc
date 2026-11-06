@@ -59,6 +59,7 @@ else in this server keeps using the public API with client credentials.
 """
 from __future__ import annotations
 
+import html
 import json
 import urllib.request
 import uuid
@@ -128,14 +129,25 @@ def _text(s: str) -> dict[str, Any]:
     return {"rawText": s, "displayText": f"<div>\n  {s} \n</div>", "webLocation": None, "fileLocation": None}
 
 
-def question_json(course_id: str, assessment_id: str, q: dict[str, Any], points: float) -> dict[str, Any]:
-    """The body Ultra posts for one question, from a pool entry (bb_mcp.exams format)."""
+def _feedback(q: dict[str, Any], on: bool) -> dict[str, str]:
+    """A question's automatic feedback: its `why`, when asked for, else empty."""
+    why = str(q.get("why") or "").strip() if on else ""
+    return {"rawText": f"<p>{html.escape(why, quote=False)}</p>" if why else ""}
+
+
+def question_json(course_id: str, assessment_id: str, q: dict[str, Any], points: float,
+                  feedback: bool = False) -> dict[str, Any]:
+    """The body Ultra posts for one question, from a pool entry (bb_mcp.exams format).
+
+    `feedback` sends the entry's `why` as the automatic feedback for a right and a wrong
+    answer alike. Off by default: in a bank an exam draws from, it would give the answer away.
+    """
     kind = str(q.get("type", "")).upper()
     # Tags are objects in Ultra (a plain string answers 400 "no String-argument constructor");
     # their shape was never recorded, so none are sent: the bank itself is the topic.
     tags = {"categoryTags": [], "keywordTags": [], "levelOfDifficultyTags": [], "topicTags": []}
     base = {"courseId": course_id, "assessmentId": assessment_id,
-            "correctResponseFeedback": {"rawText": ""}, "incorrectResponseFeedback": {"rawText": ""},
+            "correctResponseFeedback": _feedback(q, feedback), "incorrectResponseFeedback": _feedback(q, feedback),
             "points": float(q.get("points", points)), "questionText": _text(str(q["text"])), "aiState": "No", **tags}
     if kind == "ESS":
         return {**base, "questionType": "essay", "isAutoGraded": False, "isShortAnswer": False,
@@ -172,8 +184,10 @@ async def create_bank(course_id: str, title: str) -> dict[str, Any]:
     return {"id": r["id"], "title": r.get("title")}
 
 
-async def add_question(course_id: str, bank_id: str, q: dict[str, Any], points: float) -> dict[str, Any]:
-    r = await _call("POST", f"/courses/{course_id}/assessments/{bank_id}/questions", json=question_json(course_id, bank_id, q, points))
+async def add_question(course_id: str, bank_id: str, q: dict[str, Any], points: float,
+                       feedback: bool = False) -> dict[str, Any]:
+    r = await _call("POST", f"/courses/{course_id}/assessments/{bank_id}/questions",
+                    json=question_json(course_id, bank_id, q, points, feedback))
     return {"id": r.get("id"), "type": r.get("questionType"), "points": r.get("points")}
 
 
