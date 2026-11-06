@@ -281,7 +281,8 @@ makes one bank per topic from a pool file, every question tagged, and skips
 banks that already exist, so it can be rerun. A test is an assessment on the
 same route, so `bb_test_fill` puts a `bb_build_exam` manifest straight into a
 test, in the paper's order and at its points, with `replace` to empty it
-first; `bb_assessment_questions` reads any bank or test back (text, answers,
+first and `feedback` to send each question's `why` as its automatic feedback
+(for a practice test only: in an exam's banks it would give the answer away); `bb_assessment_questions` reads any bank or test back (text, answers,
 correct flags, points) to check it against the pool file, and
 `bb_assessment_clear` deletes questions, including the question pools and
 essays the public API refuses ("Invalid Question Type for update or delete").

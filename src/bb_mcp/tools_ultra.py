@@ -107,7 +107,8 @@ async def bb_assessment_clear(course_id: str, assessment_id: str, question_ids: 
             "left": len(await ultra.list_questions(course_id, assessment_id))}
 
 
-async def _add_from_pool(course_id: str, assessment_id: str, pool_path: str, ids: list[str] | None, points: float) -> dict:
+async def _add_from_pool(course_id: str, assessment_id: str, pool_path: str, ids: list[str] | None, points: float,
+                         feedback: bool = False) -> dict:
     pool = exams.load_pool(pool_path)
     by_id = {str(q.get("id")): q for q in pool["questions"]}
     # the manifest's order is the paper's order; without ids, the pool's own
@@ -116,7 +117,7 @@ async def _add_from_pool(course_id: str, assessment_id: str, pool_path: str, ids
     done, failed = [], [{"id": i, "error": "not in the pool"} for i in missing]
     for q in qs:
         try:
-            r = await ultra.add_question(course_id, assessment_id, q, points)
+            r = await ultra.add_question(course_id, assessment_id, q, points, feedback)
             done.append({"id": q.get("id"), **r})
         except BlackboardError as e:
             failed.append({"id": q.get("id"), "error": str(e)[:300]})
@@ -139,7 +140,7 @@ async def bb_bank_add_questions(course_id: str, bank_id: str, pool_path: str, id
 
 @mcp.tool()
 async def bb_test_fill(course_id: str, test_id: str, manifest_path: str, points: float | None = None,
-                       replace: bool = False) -> dict:
+                       replace: bool = False, feedback: bool = False) -> dict:
     """Put a fixed paper into a test: the questions of a `bb_build_exam` manifest, in its order.
 
     The manifest names its pool files (paths relative to the manifest's
@@ -147,6 +148,9 @@ async def bb_test_fill(course_id: str, test_id: str, manifest_path: str, points:
     `points` overrides. `replace` empties the test first. The test's own
     settings (time limit, attempts, visibility) are not touched: set them in
     the interface, then make it visible when the exam starts.
+    `feedback` sends each question's `why` as its automatic feedback, shown
+    to right and wrong answers alike: for a practice test, whose results show
+    at submission. Never for an exam: the banks are drawn from again.
     """
     _writes()
     import json as _json
@@ -167,7 +171,7 @@ async def bb_test_fill(course_id: str, test_id: str, manifest_path: str, points:
                 if (base / ppath).exists():
                     ppath = base / ppath
                     break
-        results.append({"pool": pool["name"], **await _add_from_pool(course_id, test_id, str(ppath), ids, pts)})
+        results.append({"pool": pool["name"], **await _add_from_pool(course_id, test_id, str(ppath), ids, pts, feedback)})
     return {"test": test_id, "points_each": pts, "added": sum(r["added"] for r in results),
             "failed": [f for r in results for f in r["failed"]], "pools": results,
             "questions_now": len(await ultra.list_questions(course_id, test_id))}
